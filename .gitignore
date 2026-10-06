@@ -1,0 +1,7 @@
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.exe
+.env
+.tools/
