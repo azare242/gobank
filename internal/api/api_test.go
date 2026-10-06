@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/azare242/gobank/internal/auth"
 	"github.com/azare242/gobank/internal/database"
 	"github.com/azare242/gobank/internal/models"
 )
@@ -26,11 +27,20 @@ func TestUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	app := New(db)
+	tokens, err := auth.New(auth.Config{Key: []byte(strings.Repeat("k", 32)), Issuer: "test", Audience: "test-api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := New(db, tokens)
+	token, err := tokens.Generate(1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := func(method, path, body string, want int) []byte {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
 		resp, err := app.Test(req)
 		if err != nil {
 			t.Fatal(err)

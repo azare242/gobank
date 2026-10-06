@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/azare242/gobank/internal/api"
+	"github.com/azare242/gobank/internal/auth"
 	"github.com/azare242/gobank/internal/database"
 )
 
@@ -15,6 +16,10 @@ func main() {
 }
 
 func run() error {
+	tokens, err := auth.FromEnv()
+	if err != nil {
+		return err
+	}
 	path := os.Getenv("DB_PATH")
 	if path == "" {
 		path = "users.db"
@@ -32,5 +37,5 @@ func run() error {
 		return err
 	}
 	defer sqlDB.Close()
-	return api.New(db).Listen(address)
+	return api.New(db, tokens).Listen(address)
 }
