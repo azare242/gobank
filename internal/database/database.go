@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"workshop/s2/internal/models"
+	"github.com/azare242/gobank/internal/models"
 )
 
 func Open(path string) (*gorm.DB, error) {

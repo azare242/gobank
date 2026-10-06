@@ -1,4 +1,4 @@
-module workshop/s2
+module github.com/azare242/gobank
 
 go 1.26.0
 

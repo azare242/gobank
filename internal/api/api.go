@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"workshop/s2/internal/models"
+	"github.com/azare242/gobank/internal/models"
 )
 
 func New(db *gorm.DB) *fiber.App {

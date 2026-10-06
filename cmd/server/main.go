@@ -4,8 +4,8 @@ import (
 	"log"
 	"os"
 
-	"workshop/s2/internal/api"
-	"workshop/s2/internal/database"
+	"github.com/azare242/gobank/internal/api"
+	"github.com/azare242/gobank/internal/database"
 )
 
 func main() {

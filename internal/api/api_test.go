@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"workshop/s2/internal/database"
-	"workshop/s2/internal/models"
+	"github.com/azare242/gobank/internal/database"
+	"github.com/azare242/gobank/internal/models"
 )
 
 func TestUsers(t *testing.T) {
