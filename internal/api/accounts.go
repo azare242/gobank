@@ -49,17 +49,7 @@ func writeError(c fiber.Ctx, status int, message string, err error) error {
 }
 
 func registerAccounts(app *fiber.App, db *gorm.DB, tokens *auth.Service) {
-	// Bound the number of account requests in flight; never queue beyond the limit.
-	slots := make(chan struct{}, 100)
-	accounts := app.Group("/accounts", func(c fiber.Ctx) error {
-		select {
-		case slots <- struct{}{}:
-			defer func() { <-slots }()
-			return c.Next()
-		default:
-			return fail(429, "server_busy", "Maximum concurrent clients reached")
-		}
-	}, tokens.Middleware())
+	accounts := app.Group("/accounts", tokens.Middleware())
 	lookup := func(c fiber.Ctx, tx *gorm.DB) (*models.Account, error) {
 		userID, _ := auth.UserID(c)
 		var account models.Account
@@ -72,6 +62,7 @@ func registerAccounts(app *fiber.App, db *gorm.DB, tokens *auth.Service) {
 		return &account, nil
 	}
 	respond := func(c fiber.Ctx, account *models.Account) error {
+		c.Locals("balance", account.Balance)
 		c.Set("Cache-Control", "no-store")
 		return c.JSON(fiber.Map{"status": "success", "account": account.ID, "balance": account.Balance})
 	}

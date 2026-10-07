@@ -10,7 +10,6 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/limiter"
-	"github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -19,7 +18,18 @@ import (
 	"github.com/azare242/gobank/internal/models"
 )
 
-func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
+type Config struct {
+	MaxConcurrentRequests int
+}
+
+func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
+	maxConcurrent := 100
+	if len(configs) > 0 {
+		maxConcurrent = configs[0].MaxConcurrentRequests
+	}
+	if maxConcurrent <= 0 {
+		panic("maximum concurrent requests must be positive")
+	}
 	if tokens == nil {
 		panic("authentication service is required")
 	}
@@ -27,22 +37,24 @@ func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
 	if err != nil {
 		panic(err)
 	}
+	handleError := func(c fiber.Ctx, err error) error {
+		code, message := fiber.StatusInternalServerError, "internal server error"
+		var httpErr *fiber.Error
+		if errors.As(err, &httpErr) {
+			code, message = httpErr.Code, httpErr.Message
+		}
+		if code >= 500 {
+			log.Printf("request failed: %v", err)
+		}
+		return writeError(c, code, message, err)
+	}
 	app := fiber.New(fiber.Config{
-		Immutable: true,
-		BodyLimit: 16 * 1024,
-		ErrorHandler: func(c fiber.Ctx, err error) error {
-			code, message := fiber.StatusInternalServerError, "internal server error"
-			var httpErr *fiber.Error
-			if errors.As(err, &httpErr) {
-				code, message = httpErr.Code, httpErr.Message
-			}
-			if code >= 500 {
-				log.Printf("request failed: %v", err)
-			}
-			return writeError(c, code, message, err)
-		},
+		Immutable:    true,
+		BodyLimit:    16 * 1024,
+		ErrorHandler: handleError,
 	})
-	app.Use(logger.New(), recover.New())
+	// Logging wraps recovery and admission so failures and rejected requests are logged.
+	app.Use(requestID(), requestLog(handleError), recover.New(), concurrentRequests(maxConcurrent))
 	app.Get("/health", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
