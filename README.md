@@ -1,4 +1,4 @@
-# Users API
+﻿# Users API
 
 A small Go project using Fiber v3, GORM, and SQLite. The pure-Go SQLite driver needs no C compiler. The `users` table is created automatically on startup, with an auto-incrementing `id`, a unique `username`, and a `password` column containing a bcrypt hash. Passwords are omitted from API responses.
 
@@ -30,6 +30,15 @@ The server listens at `http://127.0.0.1:3000` and stores data in `users.db`. Ove
 | GET | `/me` | Get the authenticated user's profile (Bearer token required) |
 | GET | `/users` | List users (Bearer token required) |
 | GET | `/users/:id` | Get a user by ID (Bearer token required) |
+| GET | `/accounts/:id/balance` | Read your account balance (Bearer token required) |
+| POST | `/accounts/:id/deposit` | Deposit integer currency units (Bearer token required) |
+| POST | `/accounts/:id/withdraw` | Withdraw integer currency units (Bearer token required) |
+
+Signup through `POST /users` creates a zero-balance account in the same transaction and returns its ID in the `account` field (for example, `A1001`). Accounts belong to the registering user; requests for another user's account return 404. Existing users from earlier databases are not automatically assigned accounts.
+
+Deposit and withdrawal bodies use `{"amount":500}`. Amounts must be positive integers fitting in `int64`. Successful account requests return `{"status":"success","account":"A1001","balance":500}`. Updates are atomic, withdrawals cannot make balances negative, and deposits cannot overflow `int64`.
+
+All errors use `{"status":"error","error":"insufficient_funds","message":"Account does not have enough balance"}`. Account errors map to 400 for `invalid_amount`, `missing_field`, `malformed_request`, and `unsupported_action`; 404 for `unknown_account`; 409 for `insufficient_funds`; 429 for `server_busy`; and 500 for `internal_error`. Authentication errors return 401 with `unauthorized`. Account routes allow up to 100 concurrent requests per server process and return 429 when full.
 
 Create and retrieve a user in PowerShell:
 
@@ -42,7 +51,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:3000/me -Headers $headers
 Invoke-RestMethod -Uri http://127.0.0.1:3000/users -Headers $headers
 ```
 
-User responses contain only `id` and `username`. Usernames are trimmed, case-sensitive, and must be 1–64 characters. Passwords must be 8–72 bytes. Duplicate usernames return HTTP 409; invalid input returns 400; missing users return 404.
+User responses contain `id`, `username`, and `account`. Usernames are trimmed, case-sensitive, and must be 1â€“64 characters. Passwords must be 8â€“72 bytes. Duplicate usernames return HTTP 409; invalid input returns 400; missing users return 404.
 
 ## Authentication
 
@@ -76,3 +85,4 @@ go build ./cmd/server
 ```
 
 Tests use temporary SQLite databases and check user persistence, bcrypt hashing, login, credential errors, rate limiting, middleware, deleted accounts, and rejection of invalid JWT claims and signatures.
+

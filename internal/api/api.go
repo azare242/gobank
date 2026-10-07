@@ -39,7 +39,7 @@ func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
 			if code >= 500 {
 				log.Printf("request failed: %v", err)
 			}
-			return c.Status(code).JSON(fiber.Map{"error": message})
+			return writeError(c, code, message, err)
 		},
 	})
 	app.Use(logger.New(), recover.New())
@@ -85,7 +85,7 @@ func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
 		c.Set("Cache-Control", "no-store")
 		id, _ := auth.UserID(c)
 		var user models.User
-		if err := db.Select("id", "username").First(&user, id).Error; err != nil {
+		if err := db.Select("id", "username", "account_id").First(&user, id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fiber.NewError(fiber.StatusUnauthorized, "user no longer exists")
 			}
@@ -102,6 +102,9 @@ func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 		}
 		input.Username = strings.TrimSpace(input.Username)
+		if input.Username == "" || input.Password == "" {
+			return fail(400, "missing_field", "Username and password are required")
+		}
 		if n := utf8.RuneCountInString(input.Username); n < 1 || n > 64 {
 			return fiber.NewError(fiber.StatusBadRequest, "username must be 1 to 64 characters")
 		}
@@ -113,7 +116,16 @@ func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
 			return err
 		}
 		user := models.User{Username: input.Username, Password: string(hash)}
-		if err := db.Create(&user).Error; err != nil {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&user).Error; err != nil {
+				return err
+			}
+			user.AccountID = "A" + strconv.FormatUint(uint64(user.ID)+1000, 10)
+			if err := tx.Create(&models.Account{ID: user.AccountID, UserID: user.ID}).Error; err != nil {
+				return err
+			}
+			return tx.Model(&user).Update("account_id", user.AccountID).Error
+		}); err != nil {
 			if errors.Is(err, gorm.ErrDuplicatedKey) {
 				return fiber.NewError(fiber.StatusConflict, "username already exists")
 			}
@@ -124,7 +136,7 @@ func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
 	})
 	app.Get("/users", tokens.Middleware(), func(c fiber.Ctx) error {
 		users := make([]models.User, 0)
-		if err := db.Select("id", "username").Order("id ASC").Find(&users).Error; err != nil {
+		if err := db.Select("id", "username", "account_id").Order("id ASC").Find(&users).Error; err != nil {
 			return err
 		}
 		return c.JSON(users)
@@ -135,7 +147,7 @@ func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid user ID")
 		}
 		var user models.User
-		if err := db.Select("id", "username").First(&user, uint(id)).Error; err != nil {
+		if err := db.Select("id", "username", "account_id").First(&user, uint(id)).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fiber.NewError(fiber.StatusNotFound, "user not found")
 			}
@@ -143,5 +155,6 @@ func New(db *gorm.DB, tokens *auth.Service) *fiber.App {
 		}
 		return c.JSON(user)
 	})
+	registerAccounts(app, db, tokens)
 	return app
 }
