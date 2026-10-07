@@ -88,6 +88,12 @@ Tests use temporary SQLite databases and check user persistence, bcrypt hashing,
 
 ## Concurrency and request logs
 
+### Database audit log
+
+Startup automatically creates the `audit_logs` table. Every login attempt and deposit/withdrawal request records a UTC timestamp, request ID, client IP, action, HTTP method/path, result, status code, and error code when applicable. Records include the authenticated user ID, submitted login username, account ID, validated amount, and committed balance where available. Passwords, password hashes, request bodies, and access tokens are excluded. Login throttling, authentication failures, invalid requests, insufficient funds, and concurrency rejections are also audited.
+
+Successful deposits and withdrawals insert their audit record in the same database transaction as the balance update. If the audit insert fails, the balance change rolls back and the API returns an error. Failed requests are recorded separately after rollback; login success is returned only after its audit insert succeeds. If the database cannot store an audit record, the request returns an internal error. Audit records persist across restarts and are not exposed through a public API. Existing request logs continue to be written to stdout.
+
 Set `MAX_CONCURRENT_REQUESTS` to a positive integer before starting the server (default: 100). This limit applies to all HTTP routes, including signup, login, and health. Requests beyond the limit immediately receive HTTP 429 with `server_busy`; admitted requests release their slot even when a handler fails. Invalid configuration prevents startup.
 
 Every request uses the supplied `X-Request-ID` or a generated UUID. The ID is stored in Fiber locals as `request_id` and returned in the response header, including error responses. Each request produces a JSON log on stdout with timestamp, request ID, client IP, method, path, action, account ID, result, HTTP status, and latency in milliseconds. Successful account responses also log the committed balance. Request bodies, credentials, and bearer tokens are not logged. Logging wraps recovery and concurrency admission so rejected requests and handler errors are included.

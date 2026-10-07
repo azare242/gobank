@@ -54,7 +54,7 @@ func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
 		ErrorHandler: handleError,
 	})
 	// Logging wraps recovery and admission so failures and rejected requests are logged.
-	app.Use(requestID(), requestLog(handleError), recover.New(), concurrentRequests(maxConcurrent))
+	app.Use(requestID(), requestLog(handleError), recover.New(), auditRequests(db), concurrentRequests(maxConcurrent))
 	app.Get("/health", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
@@ -71,6 +71,9 @@ func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 		}
 		input.Username = strings.TrimSpace(input.Username)
+		if utf8.RuneCountInString(input.Username) <= 64 {
+			c.Locals("audit_username", input.Username)
+		}
 		if n := utf8.RuneCountInString(input.Username); n < 1 || n > 64 || len(input.Password) < 8 || len(input.Password) > 72 {
 			return fiber.NewError(fiber.StatusUnauthorized, "invalid username or password")
 		}
@@ -91,6 +94,7 @@ func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
 		if err != nil {
 			return err
 		}
+		c.Locals("audit_user_id", user.ID)
 		return c.JSON(fiber.Map{"access_token": token, "token_type": "Bearer", "expires_in": int(auth.AccessTTL.Seconds())})
 	})
 	app.Get("/me", tokens.Middleware(), func(c fiber.Ctx) error {

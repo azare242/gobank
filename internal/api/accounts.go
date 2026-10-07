@@ -87,6 +87,7 @@ func registerAccounts(app *fiber.App, db *gorm.DB, tokens *auth.Service) {
 			if string(raw) == "null" || json.Unmarshal(raw, &amount) != nil || amount <= 0 {
 				return fail(400, "invalid_amount", "Amount must be a positive int64 integer")
 			}
+			c.Locals("audit_amount", amount)
 			var result *models.Account
 			err := db.Transaction(func(tx *gorm.DB) error {
 				account, err := lookup(c, tx)
@@ -109,11 +110,24 @@ func registerAccounts(app *fiber.App, db *gorm.DB, tokens *auth.Service) {
 					return fail(400, "invalid_amount", "Deposit would exceed maximum balance")
 				}
 				result, err = lookup(c, tx)
-				return err
+				if err != nil {
+					return err
+				}
+				entry := newAudit(c, c.Params("action"), account.ID)
+				// Matched routes have a literal action rather than an :action parameter.
+				if withdraw {
+					entry.Action = "withdraw"
+				} else {
+					entry.Action = "deposit"
+				}
+				entry.Result, entry.StatusCode = "success", 200
+				entry.Balance = &result.Balance
+				return tx.Create(&entry).Error
 			})
 			if err != nil {
 				return err
 			}
+			c.Locals("audit_saved", true)
 			return respond(c, result)
 		}
 	}

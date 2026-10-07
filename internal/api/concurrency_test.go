@@ -93,6 +93,13 @@ func TestConcurrentBalancesPersist(t *testing.T) {
 	if account.Balance != 20 {
 		t.Fatalf("persisted balance: %d, want 20", account.Balance)
 	}
+	var auditCount int64
+	if err := reopened.Model(&models.AuditLog{}).Count(&auditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 40 {
+		t.Fatalf("concurrent audit count: %d, want 40", auditCount)
+	}
 }
 
 func TestConcurrencyLimitAndRequestID(t *testing.T) {
