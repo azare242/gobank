@@ -56,7 +56,7 @@ func (s *Server) process(data []byte, ip string) (response Response) {
 			audit.StatusCode = response.StatusCode
 			audit.ErrorCode = response.Error
 			ctx, cancel := context.WithTimeout(context.Background(), s.config.OperationTimeout)
-			err := s.bank.DB.WithContext(ctx).Create(&audit).Error
+			err := s.bank.Store.WithContext(ctx).AuditLogs().Create(&audit)
 			cancel()
 			if err != nil {
 				response = errorResponse(id, err)

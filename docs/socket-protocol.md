@@ -20,7 +20,7 @@ below. `/me` and `/users/:id` return `{id,username,account}`, and `/users` retur
 an ordered array of those profiles (including `[]` when empty). HTTP `/me` rejects
 a deleted user with 401. Protected routes require authentication before their
 operation validation. Errors use `{status:"error",error,message}`. HTTP signup
-also sets Location, while authenticated/profile/account responses set no-store.
+also sets Location; HTTP login, `/me`, and account responses set no-store.
 
 Each frame is a four-byte unsigned big-endian length and one UTF-8 JSON object.
 Requests are 1–16384 bytes; responses are at most 1 MiB. Invalid/truncated framing

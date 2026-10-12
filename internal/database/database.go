@@ -60,7 +60,7 @@ func OpenConfig(config Config) (*gorm.DB, error) {
 		sqlDB.SetMaxOpenConns(20)
 		sqlDB.SetMaxIdleConns(5)
 	}
-	if err := db.AutoMigrate(&models.User{}, &models.Account{}, &models.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Account{}, &models.AuditLog{}, &models.Session{}); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}

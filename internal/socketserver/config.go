@@ -4,18 +4,25 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Environment struct {
 	Config                           Config
 	Address, DBPath, TLSCert, TLSKey string
+	DBDriver, DBDSN                  string
 }
 
 func FromEnv(get func(string) string) (Environment, error) {
 	e := Environment{Config: DefaultConfig(), Address: "127.0.0.1:4000", DBPath: "users.db"}
 	if v := get("DB_PATH"); v != "" {
 		e.DBPath = v
+	}
+	e.DBDriver = strings.ToLower(strings.TrimSpace(get("DB_DRIVER")))
+	e.DBDSN = get("DB_DSN")
+	if e.DBDSN == "" && (e.DBDriver == "" || e.DBDriver == "sqlite") {
+		e.DBDSN = e.DBPath
 	}
 	if v := get("SOCKET_LISTEN_ADDR"); v != "" {
 		e.Address = v

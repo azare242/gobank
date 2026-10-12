@@ -8,6 +8,7 @@ import (
 	"github.com/azare242/gobank/internal/auth"
 	"github.com/azare242/gobank/internal/models"
 	"github.com/azare242/gobank/internal/repository"
+	"github.com/azare242/gobank/internal/service"
 	"github.com/gofiber/fiber/v3"
 )
 

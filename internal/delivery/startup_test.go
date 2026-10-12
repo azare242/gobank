@@ -47,7 +47,7 @@ func TestIndependentExecutablesAndCLI(t *testing.T) {
 			for _, entry := range os.Environ() {
 				key, _, _ := strings.Cut(entry, "=")
 				key = strings.ToUpper(key)
-				if strings.HasPrefix(key, "JWT_") || strings.HasPrefix(key, "SOCKET_") || key == "DB_PATH" || key == "LISTEN_ADDR" || key == "MAX_CONCURRENT_REQUESTS" || key == "SESSION_TTL" || key == "SESSION_CLEANUP_INTERVAL" {
+				if strings.HasPrefix(key, "JWT_") || strings.HasPrefix(key, "SOCKET_") || key == "DB_PATH" || key == "DB_DRIVER" || key == "DB_DSN" || key == "LISTEN_ADDR" || key == "MAX_CONCURRENT_REQUESTS" || key == "SESSION_TTL" || key == "SESSION_CLEANUP_INTERVAL" {
 					continue
 				}
 				cmd.Env = append(cmd.Env, entry)

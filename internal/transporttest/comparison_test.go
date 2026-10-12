@@ -30,8 +30,9 @@ import (
 )
 
 type fixture struct {
-	db   *gorm.DB
-	call func(socketserver.Request) (socketclient.Response, error)
+	db    *gorm.DB
+	token string
+	call  func(socketserver.Request) (socketclient.Response, error)
 }
 
 func setup(tb testing.TB, transport string, counts ...int) *fixture {
@@ -79,6 +80,7 @@ func setup(tb testing.TB, transport string, counts ...int) *fixture {
 			tb.Fatal(err)
 		}
 		// A bounded connection pool provides one connection per active worker.
+		f.token = login.Token
 		clients := make([]*socketclient.Client, 0, workers)
 		pool := make(chan *socketclient.Client, workers)
 		for i := 0; i < workers; i++ {
@@ -94,7 +96,9 @@ func setup(tb testing.TB, transport string, counts ...int) *fixture {
 		f.call = func(r socketserver.Request) (socketclient.Response, error) {
 			c := <-pool
 			defer func() { pool <- c }()
-			r.Token = login.Token
+			if r.Token == "" {
+				r.Token = login.Token
+			}
 			return c.Call(context.Background(), r)
 		}
 	} else {
@@ -106,6 +110,7 @@ func setup(tb testing.TB, transport string, counts ...int) *fixture {
 		if err != nil {
 			tb.Fatal(err)
 		}
+		f.token = token
 		app := api.New(db, tokens)
 		done := make(chan error, 1)
 		go func() { done <- app.Listener(listener, fiber.ListenConfig{DisableStartupMessage: true}) }()
@@ -137,7 +142,11 @@ func setup(tb testing.TB, transport string, counts ...int) *fixture {
 				path = "/accounts/" + r.Account + "/" + r.Operation
 				if r.Operation != "balance" {
 					method = "POST"
-					body, _ = json.Marshal(map[string]json.RawMessage{"amount": r.Amount})
+					amount := make(map[string]json.RawMessage)
+					if len(r.Amount) > 0 {
+						amount["amount"] = r.Amount
+					}
+					body, _ = json.Marshal(amount)
 				}
 			default:
 				return socketclient.Response{}, fmt.Errorf("unsupported comparison operation")
@@ -146,7 +155,11 @@ func setup(tb testing.TB, transport string, counts ...int) *fixture {
 			if err != nil {
 				return socketclient.Response{}, err
 			}
-			request.Header.Set("Authorization", "Bearer "+token)
+			credential := token
+			if r.Token != "" {
+				credential = r.Token
+			}
+			request.Header.Set("Authorization", "Bearer "+credential)
 			request.Header.Set("Content-Type", "application/json")
 			response, err := client.Do(request)
 			if err != nil {
@@ -165,6 +178,76 @@ func setup(tb testing.TB, transport string, counts ...int) *fixture {
 		}
 	}
 	return f
+}
+
+func TestHTTPAndTCPValidationAndAuthentication(t *testing.T) {
+	httpFixture, tcpFixture := setup(t, "HTTP"), setup(t, "TCP")
+	checks := []struct {
+		name    string
+		request socketserver.Request
+		status  int
+		code    string
+	}{
+		{"blank signup", socketserver.Request{Operation: "create_user", Username: " ", Password: "password123"}, 400, "missing_field"},
+		{"long username", socketserver.Request{Operation: "create_user", Username: strings.Repeat("a", 65), Password: "password123"}, 400, "malformed_request"},
+		{"short password", socketserver.Request{Operation: "create_user", Username: "bob", Password: "short"}, 400, "malformed_request"},
+		{"password byte limit", socketserver.Request{Operation: "create_user", Username: "bob", Password: strings.Repeat("x", 73)}, 400, "malformed_request"},
+		{"missing login", socketserver.Request{Operation: "login"}, 401, "unauthorized"},
+		{"unknown login", socketserver.Request{Operation: "login", Username: "absent", Password: "password123"}, 401, "unauthorized"},
+		{"zero user ID", socketserver.Request{Operation: "get_user"}, 400, "malformed_request"},
+		{"unknown account", socketserver.Request{Operation: "balance", Account: "A9999"}, 404, "unknown_account"},
+		{"missing amount", socketserver.Request{Operation: "deposit", Account: "A1001"}, 400, "missing_field"},
+		{"null amount", socketserver.Request{Operation: "deposit", Account: "A1001", Amount: json.RawMessage(`null`)}, 400, "invalid_amount"},
+		{"zero amount", socketserver.Request{Operation: "withdraw", Account: "A1001", Amount: json.RawMessage(`0`)}, 400, "invalid_amount"},
+		{"fractional amount", socketserver.Request{Operation: "withdraw", Account: "A1001", Amount: json.RawMessage(`1.5`)}, 400, "invalid_amount"},
+		{"string amount", socketserver.Request{Operation: "deposit", Account: "A1001", Amount: json.RawMessage(`"10"`)}, 400, "invalid_amount"},
+		{"out of range amount", socketserver.Request{Operation: "deposit", Account: "A1001", Amount: json.RawMessage(`9223372036854775808`)}, 400, "invalid_amount"},
+		{"authentication precedes validation", socketserver.Request{Operation: "withdraw", Account: "A1001", Token: "invalid", Amount: json.RawMessage(`-1`)}, 401, "unauthorized"},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			for name, f := range map[string]*fixture{"HTTP": httpFixture, "TCP": tcpFixture} {
+				response, err := f.call(check.request)
+				if err != nil {
+					t.Fatal(name, err)
+				}
+				if response.StatusCode != check.status || response.Error != check.code {
+					t.Fatalf("%s: got %d/%s, want %d/%s", name, response.StatusCode, response.Error, check.status, check.code)
+				}
+			}
+		})
+	}
+	// Each transport must reject the other's authentication mechanism.
+	for _, check := range []struct {
+		name  string
+		f     *fixture
+		token string
+	}{
+		{"session on HTTP", httpFixture, tcpFixture.token},
+		{"JWT on TCP", tcpFixture, httpFixture.token},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			response, err := check.f.call(socketserver.Request{Operation: "me", Token: check.token})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != 401 || response.Error != "unauthorized" {
+				t.Fatal(response)
+			}
+		})
+	}
+	for name, f := range map[string]*fixture{"HTTP": httpFixture, "TCP": tcpFixture} {
+		if err := f.db.Delete(&models.User{}, 1).Error; err != nil {
+			t.Fatal(err)
+		}
+		response, err := f.call(socketserver.Request{Operation: "me"})
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		if response.StatusCode != 401 || response.Error != "unauthorized" {
+			t.Fatal(name, response)
+		}
+	}
 }
 func TestHTTPAndTCPBehaviorParity(t *testing.T) {
 	httpFixture, tcpFixture := setup(t, "HTTP"), setup(t, "TCP")

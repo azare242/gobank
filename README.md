@@ -22,7 +22,7 @@ The server listens at `http://127.0.0.1:3000` and stores data in `users.db`. Ove
 
 ### Database selection and repositories
 
-`DB_DRIVER` defaults to `sqlite`; `postgres` and `postgresql` select PostgreSQL.
+Both servers use `DB_DRIVER`, which defaults to `sqlite`; `postgres` and `postgresql` select PostgreSQL.
 `DB_DSN` is a SQLite filename/URI or a PostgreSQL connection string. For SQLite,
 it takes precedence over `DB_PATH`. For PostgreSQL it is required; create the
 database before starting the server:
@@ -42,6 +42,7 @@ PostgreSQL uses a pool of up to 20 connections.
 interfaces. `NewGORM` implements them, translating missing and duplicate records
 into repository errors. HTTP handlers receive a `Store` through
 `api.NewWithRepository`; `api.New(db, tokens)` remains a compatibility wrapper.
+The shared banking service uses these repositories for HTTP and TCP operations.
 Profile queries omit password hashes; login queries include them.
 
 ```go
@@ -197,6 +198,8 @@ See [the client walkthrough and TLS setup](docs/socket-client.md). Browsers,
 
 | Setting | Default |
 | --- | --- |
+| DB_DRIVER | sqlite; postgres/postgresql also supported |
+| DB_DSN | unset; required for PostgreSQL, overrides DB_PATH for SQLite |
 | DB_PATH | users.db |
 | SOCKET_LISTEN_ADDR | 127.0.0.1:4000 |
 | MAX_CONCURRENT_REQUESTS | 100 |
@@ -219,7 +222,7 @@ Termination stops acceptance and request admission, closes idle connections,
 drains active operations through the configured grace period, then cancels work
 and closes remaining connections. Handlers and session cleanup finish before
 the database closes. SQLite retains its single-connection setting. Login limits
-are per peer IP and process; sessions are stored in SQLite using token hashes,
+are per peer IP and process; sessions are stored in the selected database using token hashes,
 with expiration enforced on every lookup. Cleanup deletes at most 256 expired
 sessions per interval. Request IDs provide correlation, not deduplication.
 

@@ -14,8 +14,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/azare242/gobank/internal/auth"
-	"github.com/azare242/gobank/internal/models"
 	"github.com/azare242/gobank/internal/repository"
+	"github.com/azare242/gobank/internal/service"
 )
 
 type Config struct {
@@ -38,7 +38,7 @@ func NewWithRepository(store repository.Store, tokens *auth.Service, configs ...
 	if tokens == nil {
 		panic("authentication service is required")
 	}
-	bank := service.New(db)
+	bank := service.NewWithRepository(store)
 	handleError := func(c fiber.Ctx, err error) error {
 		code, message := fiber.StatusInternalServerError, "internal server error"
 		var httpErr *fiber.Error
@@ -80,11 +80,8 @@ func NewWithRepository(store repository.Store, tokens *auth.Service, configs ...
 		if utf8.RuneCountInString(input.Username) <= 64 {
 			c.Locals("audit_username", input.Username)
 		}
-		if n := utf8.RuneCountInString(input.Username); n < 1 || n > 64 || len(input.Password) < 8 || len(input.Password) > 72 {
-			return fiber.NewError(fiber.StatusUnauthorized, "invalid username or password")
-		}
-		user, err := store.WithContext(c.Context()).Users().ByUsername(input.Username)
-		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		user, err := bank.Verify(c.Context(), service.Credentials{Username: input.Username, Password: input.Password})
+		if err != nil {
 			return err
 		}
 		token, err := tokens.Generate(user.ID)
@@ -114,34 +111,8 @@ func NewWithRepository(store repository.Store, tokens *auth.Service, configs ...
 		if err := c.Bind().JSON(&input); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 		}
-		input.Username = strings.TrimSpace(input.Username)
-		if input.Username == "" || input.Password == "" {
-			return fail(400, "missing_field", "Username and password are required")
-		}
-		if n := utf8.RuneCountInString(input.Username); n < 1 || n > 64 {
-			return fiber.NewError(fiber.StatusBadRequest, "username must be 1 to 64 characters")
-		}
-		if n := len(input.Password); n < 8 || n > 72 {
-			return fiber.NewError(fiber.StatusBadRequest, "password must be 8 to 72 bytes")
-		}
 		user, err := bank.CreateUser(c.Context(), service.Credentials{Username: input.Username, Password: input.Password})
 		if err != nil {
-			return err
-		}
-		user := models.User{Username: input.Username, Password: string(hash)}
-		if err := store.WithContext(c.Context()).Transaction(func(tx repository.Store) error {
-			if err := tx.Users().Create(&user); err != nil {
-				return err
-			}
-			user.AccountID = "A" + strconv.FormatUint(uint64(user.ID)+1000, 10)
-			if err := tx.Accounts().Create(&models.Account{ID: user.AccountID, UserID: user.ID}); err != nil {
-				return err
-			}
-			return tx.Users().SetAccount(&user)
-		}); err != nil {
-			if errors.Is(err, repository.ErrDuplicate) {
-				return fiber.NewError(fiber.StatusConflict, "username already exists")
-			}
 			return err
 		}
 		c.Set("Location", "/users/"+strconv.FormatUint(uint64(user.ID), 10))
@@ -168,6 +139,6 @@ func NewWithRepository(store repository.Store, tokens *auth.Service, configs ...
 		}
 		return c.JSON(user)
 	})
-	registerAccounts(app, store, tokens)
+	registerAccounts(app, bank, tokens)
 	return app
 }

@@ -4,12 +4,12 @@ package service
 import (
 	"context"
 	"errors"
-	"math"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/azare242/gobank/internal/models"
+	"github.com/azare242/gobank/internal/repository"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -27,16 +27,20 @@ type Credentials struct {
 	Password string `json:"password"`
 }
 type Service struct {
-	DB    *gorm.DB
+	Store repository.Store
 	dummy []byte
 }
 
 func New(db *gorm.DB) *Service {
+	return NewWithRepository(repository.NewGORM(db))
+}
+
+func NewWithRepository(store repository.Store) *Service {
 	hash, err := bcrypt.GenerateFromPassword([]byte("dummy-login-comparison"), bcrypt.DefaultCost)
 	if err != nil {
 		panic(err)
 	}
-	return &Service{db, hash}
+	return &Service{Store: store, dummy: hash}
 }
 func (s *Service) CreateUser(ctx context.Context, input Credentials) (models.User, error) {
 	input.Username = strings.TrimSpace(input.Username)
@@ -55,17 +59,17 @@ func (s *Service) CreateUser(ctx context.Context, input Credentials) (models.Use
 		return user, err
 	}
 	user = models.User{Username: input.Username, Password: string(hash)}
-	err = s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&user).Error; err != nil {
+	err = s.Store.WithContext(ctx).Transaction(func(tx repository.Store) error {
+		if err := tx.Users().Create(&user); err != nil {
 			return err
 		}
 		user.AccountID = "A" + strconv.FormatUint(uint64(user.ID)+1000, 10)
-		if err := tx.Create(&models.Account{ID: user.AccountID, UserID: user.ID}).Error; err != nil {
+		if err := tx.Accounts().Create(&models.Account{ID: user.AccountID, UserID: user.ID}); err != nil {
 			return err
 		}
-		return tx.Model(&user).Update("account_id", user.AccountID).Error
+		return tx.Users().SetAccount(&user)
 	})
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
+	if errors.Is(err, repository.ErrDuplicate) {
 		err = Fail(409, "conflict", "username already exists")
 	}
 	return user, err
@@ -77,8 +81,11 @@ func (s *Service) Verify(ctx context.Context, input Credentials) (models.User, e
 	if n := utf8.RuneCountInString(input.Username); n < 1 || n > 64 || len(input.Password) < 8 || len(input.Password) > 72 {
 		return invalid()
 	}
-	err := s.DB.WithContext(ctx).Where("username = ?", input.Username).First(&user).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	found, err := s.Store.WithContext(ctx).Users().ByUsername(input.Username)
+	if err == nil {
+		user = *found
+	}
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return user, err
 	}
 	hash := s.dummy
@@ -92,28 +99,27 @@ func (s *Service) Verify(ctx context.Context, input Credentials) (models.User, e
 	return user, nil
 }
 func (s *Service) User(ctx context.Context, id uint) (models.User, error) {
-	var user models.User
-	err := s.DB.WithContext(ctx).Select("id", "username", "account_id").First(&user, id).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	user, err := s.Store.WithContext(ctx).Users().ByID(id)
+	if errors.Is(err, repository.ErrNotFound) {
 		err = Fail(404, "unsupported_action", "user not found")
 	}
-	return user, err
+	if err != nil {
+		return models.User{}, err
+	}
+	return *user, err
 }
 func (s *Service) Users(ctx context.Context) ([]models.User, error) {
-	users := make([]models.User, 0)
-	err := s.DB.WithContext(ctx).Select("id", "username", "account_id").Order("id ASC").Find(&users).Error
-	return users, err
+	return s.Store.WithContext(ctx).Users().List()
 }
-func lookup(db *gorm.DB, id uint, account string) (*models.Account, error) {
-	var a models.Account
-	err := db.Where("id = ? AND user_id = ?", account, id).First(&a).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+func lookup(store repository.Store, id uint, account string) (*models.Account, error) {
+	a, err := store.Accounts().ByOwner(account, id)
+	if errors.Is(err, repository.ErrNotFound) {
 		err = Fail(404, "unknown_account", "Account not found")
 	}
-	return &a, err
+	return a, err
 }
 func (s *Service) Balance(ctx context.Context, id uint, account string) (*models.Account, error) {
-	return lookup(s.DB.WithContext(ctx), id, account)
+	return lookup(s.Store.WithContext(ctx), id, account)
 }
 
 // Change owns the success audit; callers own failed-operation audits after rollback.
@@ -122,25 +128,22 @@ func (s *Service) Change(ctx context.Context, id uint, account string, amount in
 		return nil, Fail(400, "invalid_amount", "Amount must be a positive int64 integer")
 	}
 	var result *models.Account
-	err := s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		a, err := lookup(tx, id, account)
+	err := s.Store.WithContext(ctx).Transaction(func(tx repository.Store) error {
+		_, err := lookup(tx, id, account)
 		if err != nil {
 			return err
 		}
-		query := tx.Model(&models.Account{}).Where("id = ?", a.ID)
-		if withdraw {
-			query = query.Where("balance >= ?", amount).UpdateColumn("balance", gorm.Expr("balance - ?", amount))
-		} else {
-			query = query.Where("balance <= ?", math.MaxInt64-amount).UpdateColumn("balance", gorm.Expr("balance + ?", amount))
-		}
-		if query.Error != nil {
-			return query.Error
-		}
-		if query.RowsAffected == 0 {
-			if withdraw {
+		if err := tx.Accounts().ChangeBalance(account, id, amount, withdraw); err != nil {
+			switch {
+			case errors.Is(err, repository.ErrInsufficientFunds):
 				return Fail(409, "insufficient_funds", "Account does not have enough balance")
+			case errors.Is(err, repository.ErrBalanceOverflow):
+				return Fail(400, "invalid_amount", "Deposit would exceed maximum balance")
+			case errors.Is(err, repository.ErrNotFound):
+				return Fail(404, "unknown_account", "Account not found")
+			default:
+				return err
 			}
-			return Fail(400, "invalid_amount", "Deposit would exceed maximum balance")
 		}
 		result, err = lookup(tx, id, account)
 		if err != nil {
@@ -157,7 +160,7 @@ func (s *Service) Change(ctx context.Context, id uint, account string, amount in
 		} else {
 			audit.Action = "deposit"
 		}
-		return tx.Create(&audit).Error
+		return tx.AuditLogs().Create(&audit)
 	})
 	return result, err
 }

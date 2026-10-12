@@ -47,3 +47,53 @@ initially hit a sandbox cache permission error; the approved retry succeeded.
 Benchmarking shows database-backed sessions incur extra SQLite lookups, and
 durable write throughput is similar under the measured workload. No assertion
 that TCP is faster is made. SQLite remains configured with one connection.
+
+## Post-merge plan review: 2026-10-12
+
+Reviewed `socket_server_plan.md` against the current code, tests, and the HTTP
+implementation at commit `36aaf7a` (before the TCP alternative). The HTTP
+entrypoint, routes, JWT configuration, credential rules, response payloads,
+Location header, account ownership, and audit/transaction behavior remain
+supported. TCP is an additional executable and requires no JWT settings.
+
+| Plan section | Current verification |
+| --- | --- |
+| 1: preserve HTTP behavior | Original API tests pass; real HTTP/TCP comparison checks business payloads and status/error mappings |
+| 2: framing/protocol | net.Pipe and TCP tests cover fragmented/truncated frames, partial writes, invalid envelopes, retained frame boundaries, and oversized listings |
+| 3: services/sessions | Repository-backed signup and balance/audit transactions; bcrypt verification; hashed sessions, restart persistence, logout/revocation, expired and deleted users |
+| 4: lifecycle | Connection/request caps, absolute frame deadlines, operation cancellation, panic recovery, and idle/active shutdown tests pass with race detection |
+| 5: pipeline/audits | Tests check admission/authentication errors, throttling after reconnect, audit rollback, one audit per successful mutation, redacted logs, and failed writes after commit |
+| 6: configuration | Independent executable startup, environment validation, TLS verification, and both database drivers are wired; SQLite retains one connection |
+| 7: CLI | Unit tests and compiled-client walkthrough cover menus, hidden passwords, confirmation/cancellation, EOF, logout, reconnects, and ambiguous mutations without replay |
+| 8: concurrency/comparison | Full race suite passes; documented sixteen-case HTTP/TCP benchmark completes successfully |
+| 9: delivery/docs | All three entrypoints build; TCP imports exclude Fiber, JWT, and internal/auth; protocol/client/README instructions reviewed |
+
+Added `TestHTTPAndTCPValidationAndAuthentication` for missing/invalid credential
+and amount fields, authentication before amount validation, deleted users, and
+rejection of TCP tokens on HTTP and JWTs on TCP. The comparison helper now
+preserves a missing amount instead of replacing it with JSON null. Ran
+`go test -count=1 ./...` immediately afterward: passed.
+
+Added `TestSessionCleanupBoundAndCancellation` to verify that one cleanup deletes
+at most 256 expired sessions, periodic cleanup removes the remainder without
+deleting an active session, and cancellation stops its goroutine. Ran
+`go test -count=1 ./...` immediately afterward: passed.
+
+Final checks on this working tree all passed:
+
+```text
+go test -race -count=1 ./...
+go vet ./...
+go build ./cmd/server ./cmd/socket-server ./cmd/socket-client
+go list -deps ./cmd/socket-server
+go test ./internal/transporttest -run '^$' -bench BenchmarkTransports -benchtime=200x -benchmem -cpu=8 -count=1
+git diff --check
+```
+
+The import list was checked for forbidden Fiber/JWT/auth dependencies, with no
+matches. PostgreSQL repository integration remains unexecuted because
+`TEST_POSTGRES_DSN` is unset; SQLite-backed HTTP/TCP integration ran. This review
+records current validation, not a reconstruction of historical per-task runs.
+The benchmark rerun validates the workload; the earlier published measurement
+table retains its original run's numbers. No VM deployment or interactive
+terminal signal demonstration was performed in this automated review.

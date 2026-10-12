@@ -35,3 +35,27 @@ func TestConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDatabaseConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		values      map[string]string
+		driver, dsn string
+	}{
+		{name: "default", dsn: "users.db"},
+		{name: "legacy SQLite path", values: map[string]string{"DB_PATH": "bank.db"}, dsn: "bank.db"},
+		{name: "SQLite DSN precedence", values: map[string]string{"DB_DRIVER": " SQLite ", "DB_PATH": "old.db", "DB_DSN": "new.db"}, driver: "sqlite", dsn: "new.db"},
+		{name: "PostgreSQL", values: map[string]string{"DB_DRIVER": "postgres", "DB_DSN": "host=localhost dbname=bank"}, driver: "postgres", dsn: "host=localhost dbname=bank"},
+		{name: "PostgreSQL missing DSN", values: map[string]string{"DB_DRIVER": "postgres"}, driver: "postgres"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env, err := FromEnv(func(key string) string { return test.values[key] })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if env.DBDriver != test.driver || env.DBDSN != test.dsn {
+				t.Fatalf("database config: driver %q, DSN %q", env.DBDriver, env.DBDSN)
+			}
+		})
+	}
+}

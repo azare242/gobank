@@ -31,7 +31,7 @@ func run() error {
 		}
 		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
 	}
-	db, err := database.Open(env.DBPath)
+	db, err := database.OpenConfig(database.Config{Driver: env.DBDriver, DSN: env.DBDSN})
 	if err != nil {
 		return err
 	}
