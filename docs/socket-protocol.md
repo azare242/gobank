@@ -57,3 +57,40 @@ payloads. Failed audits use a separate bounded context after operation rollback.
 A failed response write does not change a committed result. Request IDs provide
 correlation only: never blindly retry money changes after an ambiguous disconnect.
 Browsers, curl and Invoke-RestMethod cannot speak this protocol directly.
+
+## Wire examples and results
+
+These are JSON payloads; each must be prefixed with its four-byte length. The
+interactive client handles framing and token attachment without requiring JSON.
+
+```json
+{"version":1,"request_id":"demo-1","operation":"login","username":"alice","password":"example-password"}
+```
+
+```json
+{"version":1,"request_id":"demo-1","status":"success","status_code":200,"data":{"session_token":"<opaque-token>","expires_in":900}}
+```
+
+```json
+{"version":1,"request_id":"demo-2","operation":"deposit","token":"<opaque-token>","account":"A1001","amount":500}
+```
+
+```json
+{"version":1,"request_id":"demo-2","status":"success","status_code":200,"data":{"status":"success","account":"A1001","balance":500}}
+```
+
+`create_user` returns 201 with `{id,username,account}`; `me` and `get_user` return
+the same public profile at 200. `list_users` returns an ordered array of profiles.
+`health` returns `{status:"ok"}`. `balance`, `deposit` and `withdraw` return
+`{status:"success",account,balance}` at 200. `logout` returns
+`{logged_out:true}` at 200 and revokes the presented token. All other protected
+requests with that token then return 401/unauthorized, including on the same
+connection. Login creates a distinct session each time. The database stores
+only SHA-256 token hashes, user IDs, creation and absolute expiration timestamps.
+
+The 1 MiB listing limit produces 500/response_too_large with an explanatory
+message; clients receive no partial listing. Unknown operations return
+400/unsupported_action; unsupported versions and invalid envelopes return
+400/malformed_request. Credential failures and invalid/missing/expired/revoked
+sessions return 401/unauthorized. Framing failures close the connection, while
+complete invalid JSON receives an error and permits the next valid frame.

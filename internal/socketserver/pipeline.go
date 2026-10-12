@@ -32,7 +32,7 @@ func (s *Server) process(data []byte, ip string) (response Response) {
 	}
 	request.RequestID = id
 	audit := models.AuditLog{CreatedAt: start.UTC(), RequestID: id, ClientIP: ip, Method: "TCP", Path: "/" + request.Operation, Action: request.Operation}
-	if request.Operation == "deposit" || request.Operation == "withdraw" {
+	if request.Operation == "balance" || request.Operation == "deposit" || request.Operation == "withdraw" {
 		audit.AccountID = request.Account
 		audit.Path = "/accounts/" + request.Account + "/" + request.Operation
 	}

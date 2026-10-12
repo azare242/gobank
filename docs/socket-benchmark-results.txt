@@ -1,0 +1,22 @@
+goos: windows
+goarch: amd64
+pkg: github.com/azare242/gobank/internal/transporttest
+cpu: 11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz
+BenchmarkTransports/HTTP/health/parallel=false-8	200	    107208 ns/op	         0 db-wait-us/op	         0 db-waits/op	       993.0 p95-us	      9328 req/s	    9779 B/op	     132 allocs/op
+BenchmarkTransports/HTTP/health/parallel=true-8	200	     23415 ns/op	         0 db-wait-us/op	         0 db-waits/op	      1002 p95-us	     42708 req/s	    9017 B/op	     132 allocs/op
+BenchmarkTransports/HTTP/balance/parallel=false-8	200	    256801 ns/op	         0 db-wait-us/op	         0 db-waits/op	      1224 p95-us	      3894 req/s	   18766 B/op	     268 allocs/op
+BenchmarkTransports/HTTP/balance/parallel=true-8	200	     85292 ns/op	       431.4 db-wait-us/op	         0.9950 db-waits/op	      1802 p95-us	     11724 req/s	   18962 B/op	     273 allocs/op
+BenchmarkTransports/HTTP/deposit/parallel=false-8	200	   2175419 ns/op	         0 db-wait-us/op	         0 db-waits/op	      6999 p95-us	       459.7 req/s	   42045 B/op	     566 allocs/op
+BenchmarkTransports/HTTP/deposit/parallel=true-8	200	   1784179 ns/op	     12067 db-wait-us/op	         0.9950 db-waits/op	     41206 p95-us	       560.5 req/s	   42669 B/op	     569 allocs/op
+BenchmarkTransports/HTTP/withdraw/parallel=false-8	200	   1937354 ns/op	         0 db-wait-us/op	         0 db-waits/op	      6917 p95-us	       516.2 req/s	   41508 B/op	     565 allocs/op
+BenchmarkTransports/HTTP/withdraw/parallel=true-8	200	   1806725 ns/op	     12125 db-wait-us/op	         0.9950 db-waits/op	     38902 p95-us	       553.5 req/s	   41997 B/op	     568 allocs/op
+BenchmarkTransports/TCP/health/parallel=false-8	200	     88268 ns/op	         0 db-wait-us/op	         0 db-waits/op	       995.0 p95-us	     11329 req/s	    6405 B/op	     101 allocs/op
+BenchmarkTransports/TCP/health/parallel=true-8	200	     24639 ns/op	         0 db-wait-us/op	         0 db-waits/op	       785.0 p95-us	     40586 req/s	    6568 B/op	     102 allocs/op
+BenchmarkTransports/TCP/balance/parallel=false-8	200	    317936 ns/op	         0 db-wait-us/op	         0 db-waits/op	      1173 p95-us	      3145 req/s	   23197 B/op	     340 allocs/op
+BenchmarkTransports/TCP/balance/parallel=true-8	200	    221406 ns/op	      1374 db-wait-us/op	         2.995 db-waits/op	      6000 p95-us	      4517 req/s	   23892 B/op	     351 allocs/op
+BenchmarkTransports/TCP/deposit/parallel=false-8	200	   2207702 ns/op	         0 db-wait-us/op	         0 db-waits/op	      7591 p95-us	       453.0 req/s	   45145 B/op	     619 allocs/op
+BenchmarkTransports/TCP/deposit/parallel=true-8	200	   1969675 ns/op	     13220 db-wait-us/op	         2.995 db-waits/op	     31333 p95-us	       507.7 req/s	   45290 B/op	     629 allocs/op
+BenchmarkTransports/TCP/withdraw/parallel=false-8	200	   2044454 ns/op	         0 db-wait-us/op	         0 db-waits/op	      7291 p95-us	       489.1 req/s	   44864 B/op	     618 allocs/op
+BenchmarkTransports/TCP/withdraw/parallel=true-8	200	   1930610 ns/op	     12969 db-wait-us/op	         2.995 db-waits/op	     29015 p95-us	       518.0 req/s	   45349 B/op	     628 allocs/op
+PASS
+ok  	github.com/azare242/gobank/internal/transporttest	11.450s

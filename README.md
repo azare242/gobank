@@ -114,8 +114,38 @@ go run ./cmd/socket-server
 
 The default listener is `127.0.0.1:4000`. This is a custom framed protocol; see
 [the protocol specification](docs/socket-protocol.md) for operations, payloads,
-error mappings, framing and retry behavior. The interactive client is planned
-in step 7 and is outside the steps 1–6 implementation.
+error mappings, framing and retry behavior. Start the interactive client in a
+second terminal:
+
+```powershell
+go run ./cmd/socket-client
+```
+
+The public menu offers Register, Login, Health check, and Exit. After login it
+offers My profile, Account balance, Deposit, Withdraw, Logout, and Exit.
+Passwords are hidden on terminals, sessions stay in client process memory, and
+money changes require confirmation. User listing and user lookup remain server
+operations and are intentionally absent from the menus. EOF/Ctrl+C attempts a
+bounded logout and closes the client. Failed logout clears local credentials and
+reports that the server session may remain until expiration or revocation.
+
+| Client flag | Default / purpose |
+| --- | --- |
+| -addr | 127.0.0.1:4000 |
+| -timeout | 15s; bounds dialing and each exchange |
+| -tls | false; enable verified TLS |
+| -ca | optional extra trusted PEM certificate/CA file; requires -tls |
+| -server-name | optional certificate hostname override; requires -tls |
+
+After a connection failure, the next selected operation reconnects with the
+in-memory session. An expired/revoked session returns the client to the public
+menu. Requests are never automatically replayed. A deposit/withdrawal that loses
+its response may have committed; the client offers a balance check after
+reconnecting. Request IDs provide correlation only, so checking the balance
+does not prove which request changed it when other clients are active.
+
+See [the client walkthrough and TLS setup](docs/socket-client.md). Browsers,
+`curl`, and `Invoke-RestMethod` cannot call this custom TCP protocol directly.
 
 | Setting | Default |
 | --- | --- |
@@ -145,6 +175,15 @@ are per peer IP and process; sessions are stored in SQLite using token hashes,
 with expiration enforced on every lookup. Cleanup deletes at most 256 expired
 sessions per interval. Request IDs provide correlation, not deduplication.
 
-Validation for steps 1–6 is recorded in
+Validation for steps 1-9 is recorded in
 [the implementation record](docs/socket-implementation.md).
+The [benchmark report](docs/socket-benchmarks.md) compares real loopback HTTP and
+TCP requests, including latency, throughput, memory allocation and SQLite waits.
+
+```powershell
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./cmd/server ./cmd/socket-server ./cmd/socket-client
+```
 

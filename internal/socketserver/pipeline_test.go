@@ -105,6 +105,10 @@ func TestPersistentBanking(t *testing.T) {
 	if count != 1 {
 		t.Fatal("duplicate deposit audits", count)
 	}
+	db.Model(&models.AuditLog{}).Where("action = ?", "login").Count(&count)
+	if count != 11 {
+		t.Fatal("missing login/throttle audits", count)
+	}
 	s.slots <- struct{}{}
 	for len(s.slots) < cap(s.slots) {
 		s.slots <- struct{}{}

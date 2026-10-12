@@ -77,3 +77,16 @@ func TestFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFrameFailuresOverPipe(t *testing.T) {
+	for _, data := range [][]byte{{0}, {0, 0, 0, 0}, {0, 0, 64, 1}, {0, 0, 0, 3, 1}} {
+		reader, writer := net.Pipe()
+		done := make(chan struct{})
+		go func() { defer close(done); writer.Write(data); writer.Close() }()
+		if _, err := ReadFrame(reader, RequestLimit); err == nil {
+			t.Fatal("invalid frame accepted")
+		}
+		reader.Close()
+		<-done
+	}
+}
