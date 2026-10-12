@@ -14,7 +14,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/azare242/gobank/internal/auth"
-	"github.com/azare242/gobank/internal/service"
+	"github.com/azare242/gobank/internal/models"
+	"github.com/azare242/gobank/internal/repository"
 )
 
 type Config struct {
@@ -22,6 +23,11 @@ type Config struct {
 }
 
 func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
+	return NewWithRepository(repository.NewGORM(db), tokens, configs...)
+}
+
+// NewWithRepository allows callers to inject persistence independently of GORM.
+func NewWithRepository(store repository.Store, tokens *auth.Service, configs ...Config) *fiber.App {
 	maxConcurrent := 100
 	if len(configs) > 0 {
 		maxConcurrent = configs[0].MaxConcurrentRequests
@@ -54,7 +60,7 @@ func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
 		ErrorHandler: handleError,
 	})
 	// Logging wraps recovery and admission so failures and rejected requests are logged.
-	app.Use(requestID(), requestLog(handleError), recover.New(), auditRequests(db), concurrentRequests(maxConcurrent))
+	app.Use(requestID(), requestLog(handleError), recover.New(), auditRequests(store), concurrentRequests(maxConcurrent))
 	app.Get("/health", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
@@ -77,8 +83,8 @@ func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
 		if n := utf8.RuneCountInString(input.Username); n < 1 || n > 64 || len(input.Password) < 8 || len(input.Password) > 72 {
 			return fiber.NewError(fiber.StatusUnauthorized, "invalid username or password")
 		}
-		user, err := bank.Verify(c.Context(), service.Credentials{Username: input.Username, Password: input.Password})
-		if err != nil {
+		user, err := store.WithContext(c.Context()).Users().ByUsername(input.Username)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
 			return err
 		}
 		token, err := tokens.Generate(user.ID)
@@ -91,10 +97,9 @@ func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
 	app.Get("/me", tokens.Middleware(), func(c fiber.Ctx) error {
 		c.Set("Cache-Control", "no-store")
 		id, _ := auth.UserID(c)
-		user, err := bank.User(c.Context(), id)
+		user, err := store.WithContext(c.Context()).Users().ByID(id)
 		if err != nil {
-			var appErr *service.Error
-			if errors.As(err, &appErr) && appErr.Status == 404 {
+			if errors.Is(err, repository.ErrNotFound) {
 				return fiber.NewError(fiber.StatusUnauthorized, "user no longer exists")
 			}
 			return err
@@ -123,11 +128,27 @@ func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
 		if err != nil {
 			return err
 		}
+		user := models.User{Username: input.Username, Password: string(hash)}
+		if err := store.WithContext(c.Context()).Transaction(func(tx repository.Store) error {
+			if err := tx.Users().Create(&user); err != nil {
+				return err
+			}
+			user.AccountID = "A" + strconv.FormatUint(uint64(user.ID)+1000, 10)
+			if err := tx.Accounts().Create(&models.Account{ID: user.AccountID, UserID: user.ID}); err != nil {
+				return err
+			}
+			return tx.Users().SetAccount(&user)
+		}); err != nil {
+			if errors.Is(err, repository.ErrDuplicate) {
+				return fiber.NewError(fiber.StatusConflict, "username already exists")
+			}
+			return err
+		}
 		c.Set("Location", "/users/"+strconv.FormatUint(uint64(user.ID), 10))
 		return c.Status(fiber.StatusCreated).JSON(user)
 	})
 	app.Get("/users", tokens.Middleware(), func(c fiber.Ctx) error {
-		users, err := bank.Users(c.Context())
+		users, err := store.WithContext(c.Context()).Users().List()
 		if err != nil {
 			return err
 		}
@@ -138,12 +159,15 @@ func New(db *gorm.DB, tokens *auth.Service, configs ...Config) *fiber.App {
 		if err != nil || id == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "invalid user ID")
 		}
-		user, err := bank.User(c.Context(), uint(id))
+		user, err := store.WithContext(c.Context()).Users().ByID(uint(id))
 		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return fiber.NewError(fiber.StatusNotFound, "user not found")
+			}
 			return err
 		}
 		return c.JSON(user)
 	})
-	registerAccounts(app, db, tokens)
+	registerAccounts(app, store, tokens)
 	return app
 }

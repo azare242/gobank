@@ -7,9 +7,8 @@ import (
 
 	"github.com/azare242/gobank/internal/auth"
 	"github.com/azare242/gobank/internal/models"
-	"github.com/azare242/gobank/internal/service"
+	"github.com/azare242/gobank/internal/repository"
 	"github.com/gofiber/fiber/v3"
-	"gorm.io/gorm"
 )
 
 func newAudit(c fiber.Ctx, action, account string) models.AuditLog {
@@ -29,7 +28,7 @@ func newAudit(c fiber.Ctx, action, account string) models.AuditLog {
 	return entry
 }
 
-func auditRequests(db *gorm.DB) fiber.Handler {
+func auditRequests(store repository.Store) fiber.Handler {
 	return func(c fiber.Ctx) (err error) {
 		action, account := "", ""
 		if c.Method() == "POST" && c.Path() == "/login" {
@@ -75,7 +74,7 @@ func auditRequests(db *gorm.DB) fiber.Handler {
 				if entry.StatusCode >= 400 {
 					entry.Result = "error"
 				}
-				if saveErr := db.Create(&entry).Error; saveErr != nil {
+				if saveErr := store.WithContext(c.Context()).AuditLogs().Create(&entry); saveErr != nil {
 					err = saveErr
 				}
 			}

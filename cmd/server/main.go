@@ -5,10 +5,12 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/azare242/gobank/internal/api"
 	"github.com/azare242/gobank/internal/auth"
 	"github.com/azare242/gobank/internal/database"
+	"github.com/azare242/gobank/internal/repository"
 )
 
 func main() {
@@ -38,7 +40,12 @@ func run() error {
 	if address == "" {
 		address = "127.0.0.1:3000"
 	}
-	db, err := database.Open(path)
+	dsn := os.Getenv("DB_DSN")
+	driver := strings.ToLower(strings.TrimSpace(os.Getenv("DB_DRIVER")))
+	if dsn == "" && (driver == "" || driver == "sqlite") {
+		dsn = path
+	}
+	db, err := database.OpenConfig(database.Config{Driver: driver, DSN: dsn})
 	if err != nil {
 		return err
 	}
@@ -47,5 +54,5 @@ func run() error {
 		return err
 	}
 	defer sqlDB.Close()
-	return api.New(db, tokens, api.Config{MaxConcurrentRequests: maxConcurrent}).Listen(address)
+	return api.NewWithRepository(repository.NewGORM(db), tokens, api.Config{MaxConcurrentRequests: maxConcurrent}).Listen(address)
 }

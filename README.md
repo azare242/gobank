@@ -1,6 +1,6 @@
 ﻿# Users API
 
-A small Go project using Fiber v3, GORM, and SQLite. The pure-Go SQLite driver needs no C compiler. The `users` table is created automatically on startup, with an auto-incrementing `id`, a unique `username`, and a `password` column containing a bcrypt hash. Passwords are omitted from API responses.
+A small Go project using Fiber v3 and GORM with SQLite or PostgreSQL. The pure-Go SQLite driver needs no C compiler. The `users`, `accounts`, and `audit_logs` tables are created automatically on startup. User IDs auto-increment, usernames are unique, and passwords are stored as bcrypt hashes and omitted from API responses.
 
 ## Run
 
@@ -19,6 +19,46 @@ go run ./cmd/server
 ```
 
 The server listens at `http://127.0.0.1:3000` and stores data in `users.db`. Override these defaults with the `LISTEN_ADDR` and `DB_PATH` environment variables. The database starts empty; create users through the API.
+
+### Database selection and repositories
+
+`DB_DRIVER` defaults to `sqlite`; `postgres` and `postgresql` select PostgreSQL.
+`DB_DSN` is a SQLite filename/URI or a PostgreSQL connection string. For SQLite,
+it takes precedence over `DB_PATH`. For PostgreSQL it is required; create the
+database before starting the server:
+
+```powershell
+$env:DB_DRIVER = 'postgres'
+$env:DB_DSN = 'host=localhost port=5432 user=gobank password=development-password dbname=gobank sslmode=disable'
+go run ./cmd/server
+```
+
+Use your deployment's TLS settings in the PostgreSQL DSN. Switching drivers
+connects to a separate database; it does not copy existing data. The same models
+and repositories work with either dialect. SQLite retains its single connection;
+PostgreSQL uses a pool of up to 20 connections.
+
+`internal/repository` exposes `Users`, `Accounts`, `AuditLogs`, and `Store`
+interfaces. `NewGORM` implements them, translating missing and duplicate records
+into repository errors. HTTP handlers receive a `Store` through
+`api.NewWithRepository`; `api.New(db, tokens)` remains a compatibility wrapper.
+Profile queries omit password hashes; login queries include them.
+
+```go
+db, err := database.OpenConfig(database.Config{Driver: "postgres", DSN: dsn})
+if err != nil { return err }
+store := repository.NewGORM(db).WithContext(ctx)
+err = store.Transaction(func(tx repository.Store) error {
+    if err := tx.Accounts().ChangeBalance(accountID, userID, 500, false); err != nil {
+        return err
+    }
+    return tx.AuditLogs().Create(&entry)
+})
+```
+
+Use the callback's `tx` repositories for all operations in a transaction. Returning
+an error rolls them all back. Balance changes use atomic conditional updates to
+enforce ownership, prevent overdrafts, and prevent integer overflow.
 
 ## Endpoints
 
@@ -82,6 +122,14 @@ go mod verify
 go test ./...
 go vet ./...
 go build ./cmd/server
+```
+
+Repository contract tests always run on SQLite. To run the same tests against a
+dedicated PostgreSQL test database (tables are migrated; test rows are rolled back):
+
+```powershell
+$env:TEST_POSTGRES_DSN = 'host=localhost port=5432 user=gobank password=development-password dbname=gobank_test sslmode=disable'
+go test ./internal/repository -v
 ```
 
 Tests use temporary SQLite databases and check user persistence, bcrypt hashing, login, credential errors, rate limiting, middleware, deleted accounts, invalid JWT claims and signatures, concurrent balance updates, insufficient funds, committed balance persistence after reopening, concurrency rejection and slot release, and request IDs.
