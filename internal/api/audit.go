@@ -7,6 +7,7 @@ import (
 
 	"github.com/azare242/gobank/internal/auth"
 	"github.com/azare242/gobank/internal/models"
+	"github.com/azare242/gobank/internal/service"
 	"github.com/gofiber/fiber/v3"
 	"gorm.io/gorm"
 )
@@ -54,8 +55,11 @@ func auditRequests(db *gorm.DB) fiber.Handler {
 					entry.StatusCode, entry.ErrorCode = 500, "internal_error"
 					var specific *apiError
 					var httpErr *fiber.Error
+					var appErr *service.Error
 					if errors.As(err, &specific) {
 						entry.StatusCode, entry.ErrorCode = specific.status, specific.code
+					} else if errors.As(err, &appErr) {
+						entry.StatusCode, entry.ErrorCode = appErr.Status, appErr.Code
 					} else if errors.As(err, &httpErr) {
 						entry.StatusCode = httpErr.Code
 						switch httpErr.Code {

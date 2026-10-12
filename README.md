@@ -101,3 +101,50 @@ Every request uses the supplied `X-Request-ID` or a generated UUID. The ID is st
 Deposits and withdrawals run inside GORM transactions. Withdrawals use an atomic conditional SQL decrement with `balance >= amount`; deposits use an atomic increment guarded against overflow. The updated balance is read inside the transaction and HTTP success is sent only after commit. Errors roll back the transaction. SQLite uses a single connection per process to serialize this application's writes, and the database enforces `CHECK(balance >= 0)`.
 
 
+## Alternative TCP server
+
+The Fiber HTTP server remains available through `go run ./cmd/server` with its
+existing JWT configuration. The additional TCP server uses persistent opaque
+sessions and does not require any JWT settings:
+
+```powershell
+$env:DB_PATH = "socket-users.db"
+go run ./cmd/socket-server
+```
+
+The default listener is `127.0.0.1:4000`. This is a custom framed protocol; see
+[the protocol specification](docs/socket-protocol.md) for operations, payloads,
+error mappings, framing and retry behavior. The interactive client is planned
+in step 7 and is outside the steps 1–6 implementation.
+
+| Setting | Default |
+| --- | --- |
+| DB_PATH | users.db |
+| SOCKET_LISTEN_ADDR | 127.0.0.1:4000 |
+| MAX_CONCURRENT_REQUESTS | 100 |
+| SOCKET_MAX_CONNECTIONS | 256 |
+| SESSION_TTL | 15m (minimum 1s) |
+| SESSION_CLEANUP_INTERVAL | 1m |
+| SOCKET_READ_TIMEOUT | 30s, absolute per frame including TLS handshake |
+| SOCKET_WRITE_TIMEOUT | 10s |
+| SOCKET_OPERATION_TIMEOUT | 10s |
+| SOCKET_DRAIN_TIMEOUT | 15s |
+| SOCKET_TLS_CERT / SOCKET_TLS_KEY | unset; both required for TLS |
+
+Limits must be positive integers; durations use Go syntax such as `30s` or `15m`.
+Non-loopback listeners require TLS certificates. Set `SOCKET_TLS_CERT` and
+`SOCKET_TLS_KEY` to PEM certificate/key paths to enable TLS (minimum TLS 1.2).
+Clients must verify the certificate and hostname/IP; plaintext is for loopback
+development. The executable validates TLS material before opening the database.
+
+Termination stops acceptance and request admission, closes idle connections,
+drains active operations through the configured grace period, then cancels work
+and closes remaining connections. Handlers and session cleanup finish before
+the database closes. SQLite retains its single-connection setting. Login limits
+are per peer IP and process; sessions are stored in SQLite using token hashes,
+with expiration enforced on every lookup. Cleanup deletes at most 256 expired
+sessions per interval. Request IDs provide correlation, not deduplication.
+
+Validation for steps 1–6 is recorded in
+[the implementation record](docs/socket-implementation.md).
+

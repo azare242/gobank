@@ -24,7 +24,7 @@ func Open(path string) (*gorm.DB, error) {
 	}
 	// Serialize writes for this small SQLite application.
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&models.User{}, &models.Account{}, &models.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Account{}, &models.AuditLog{}, &models.Session{}); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
