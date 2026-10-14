@@ -1,24 +1,39 @@
-﻿# Users API
+# Mini Banking API
 
-A small Go project using Fiber v3 and GORM with SQLite or PostgreSQL. The pure-Go SQLite driver needs no C compiler. The `users`, `accounts`, and `audit_logs` tables are created automatically on startup. User IDs auto-increment, usernames are unique, and passwords are stored as bcrypt hashes and omitted from API responses.
+A banking API built with Go, Fiber v3, and GORM, using SQLite or PostgreSQL. It supports registration, JWT authentication, account balances, deposits, and withdrawals, with ownership checks and audit logs for authentication attempts and money movements. Balance changes are atomic and prevent overdrafts and integer overflow.
+
+The pure-Go SQLite driver needs no C compiler. The `users`, `accounts`, and `audit_logs` tables are created automatically on startup. Usernames are unique, and passwords are stored as bcrypt hashes and omitted from API responses.
 
 ## Run
 
-Install Go 1.26 or later, then run from this directory:
+On Linux, install Go 1.26 or later, OpenSSL, curl, and jq. Run these commands
+from the project directory to create your local configuration:
 
-```powershell
-go mod tidy
-$key = New-Object byte[] 32
-$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-$rng.GetBytes($key)
-$rng.Dispose()
-$env:JWT_SECRET = [Convert]::ToBase64String($key)
-$env:JWT_ISSUER = 'gobank'
-$env:JWT_AUDIENCE = 'gobank-api'
+```bash
+go mod download
+cp .env.example .env
+chmod 600 .env
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 32)|" .env
+```
+
+Create `.env` once and keep it for subsequent runs. Edit it to change the listener,
+database, or concurrency limit. It is ignored by Git; keep secrets out of commits.
+
+Load the file and start the server in Bash:
+
+```bash
+set -a
+source ./.env
+set +a
 go run ./cmd/server
 ```
 
-The server listens at `http://127.0.0.1:3000` and stores data in `users.db`. Override these defaults with the `LISTEN_ADDR` and `DB_PATH` environment variables. The database starts empty; create users through the API.
+The server reads environment variables; Bash exports the values from `.env` with
+`set -a`. Repeat the loading commands after editing `.env` or opening a new shell.
+Use only a trusted `.env` file because `source` executes shell syntax.
+
+The default listener is `http://127.0.0.1:3000` and the SQLite database is
+`users.db`. The database starts empty; create users through the API.
 
 ### Database selection and repositories
 
@@ -27,11 +42,15 @@ The HTTP server uses `DB_DRIVER`, which defaults to `sqlite`; `postgres` and `po
 it takes precedence over `DB_PATH`. For PostgreSQL it is required; create the
 database before starting the server:
 
-```powershell
-$env:DB_DRIVER = 'postgres'
-$env:DB_DSN = 'host=localhost port=5432 user=gobank password=development-password dbname=gobank sslmode=disable'
-go run ./cmd/server
+Edit these entries in `.env` to use PostgreSQL:
+
+```dotenv
+DB_DRIVER=postgres
+DB_DSN='host=localhost port=5432 user=gobank password=development-password dbname=gobank sslmode=disable'
 ```
+
+Reload `.env` with `set -a; source ./.env; set +a`, then run
+`go run ./cmd/server`.
 
 Use your deployment's TLS settings in the PostgreSQL DSN. Switching drivers
 connects to a separate database; it does not copy existing data. The same models
@@ -81,22 +100,25 @@ Deposit and withdrawal bodies use `{"amount":500}`. Amounts must be positive int
 
 All errors use `{"status":"error","error":"insufficient_funds","message":"Account does not have enough balance"}`. Account errors map to 400 for `invalid_amount`, `missing_field`, `malformed_request`, and `unsupported_action`; 404 for `unknown_account`; 409 for `insufficient_funds`; 429 for `server_busy`; and 500 for `internal_error`. Authentication errors return 401 with `unauthorized`. All routes share a configurable concurrency limit (default 100) and return 429 when full.
 
-Create and retrieve a user in PowerShell:
+Create and retrieve a user from a second Linux terminal:
 
-```powershell
-$body = @{ username = 'alice'; password = 'example-password' } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3000/users -ContentType 'application/json' -Body $body
-$login = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3000/login -ContentType 'application/json' -Body $body
-$headers = @{ Authorization = "Bearer $($login.access_token)" }
-Invoke-RestMethod -Uri http://127.0.0.1:3000/me -Headers $headers
-Invoke-RestMethod -Uri http://127.0.0.1:3000/users -Headers $headers
+```bash
+body='{"username":"alice","password":"example-password"}'
+curl --fail-with-body -sS http://127.0.0.1:3000/users \
+  -H 'Content-Type: application/json' -d "$body"
+token=$(curl --fail-with-body -sS http://127.0.0.1:3000/login \
+  -H 'Content-Type: application/json' -d "$body" | jq -er '.access_token')
+curl --fail-with-body -sS http://127.0.0.1:3000/me \
+  -H "Authorization: Bearer $token"
+curl --fail-with-body -sS http://127.0.0.1:3000/users \
+  -H "Authorization: Bearer $token"
 ```
 
 User responses contain `id`, `username`, and `account`. Usernames are trimmed, case-sensitive, and must be 1â€“64 characters. Passwords must be 8â€“72 bytes. Duplicate usernames return HTTP 409; invalid input returns 400; missing users return 404.
 
 ## Authentication
 
-Startup requires `JWT_SECRET` (standard base64 containing at least 32 cryptographically random bytes), `JWT_ISSUER`, and `JWT_AUDIENCE`. Keep the same key in a secret manager across restarts and instances; the example above generates a new development key each time, invalidating previous tokens. Never commit secrets.
+Startup requires `JWT_SECRET` (standard base64 containing at least 32 cryptographically random bytes), `JWT_ISSUER`, and `JWT_AUDIENCE`. Keep the same key in a secret manager across restarts and instances; the setup above generates a development key when you create `.env`. Replacing that key invalidates previous tokens. Never commit secrets.
 
 Login returns `access_token`, `token_type: "Bearer"`, and `expires_in: 900`, with `Cache-Control: no-store`. Unknown usernames and wrong passwords receive the same 401 response, with a dummy bcrypt comparison for unknown users. Login is limited to 10 attempts per IP per minute. The limiter uses process-local storage; multiple instances need shared limiter storage. Configure trusted proxies explicitly before deploying behind a proxy.
 
@@ -118,18 +140,26 @@ References: [golang-jwt validation options](https://pkg.go.dev/github.com/golang
 
 ## Verify
 
-```powershell
+```bash
 go mod verify
 go test ./...
 go vet ./...
-go build ./cmd/server
+go build -o /tmp/gobank-server ./cmd/server
 ```
 
 Repository contract tests always run on SQLite. To run the same tests against a
 dedicated PostgreSQL test database (tables are migrated; test rows are rolled back):
 
-```powershell
-$env:TEST_POSTGRES_DSN = 'host=localhost port=5432 user=gobank password=development-password dbname=gobank_test sslmode=disable'
+Add the test database connection to `.env`:
+
+```dotenv
+TEST_POSTGRES_DSN='host=localhost port=5432 user=gobank password=development-password dbname=gobank_test sslmode=disable'
+```
+
+```bash
+set -a
+source ./.env
+set +a
 go test ./internal/repository -v
 ```
 
@@ -143,7 +173,7 @@ Startup automatically creates the `audit_logs` table. Every login attempt and de
 
 Successful deposits and withdrawals insert their audit record in the same database transaction as the balance update. If the audit insert fails, the balance change rolls back and the API returns an error. Failed requests are recorded separately after rollback; login success is returned only after its audit insert succeeds. If the database cannot store an audit record, the request returns an internal error. Audit records persist across restarts and are not exposed through a public API. Existing request logs continue to be written to stdout.
 
-Set `MAX_CONCURRENT_REQUESTS` to a positive integer before starting the server (default: 100). This limit applies to all HTTP routes, including signup, login, and health. Requests beyond the limit immediately receive HTTP 429 with `server_busy`; admitted requests release their slot even when a handler fails. Invalid configuration prevents startup.
+Set `MAX_CONCURRENT_REQUESTS` in `.env` to a positive integer before starting the server (default: 100). This limit applies to all HTTP routes, including signup, login, and health. Requests beyond the limit immediately receive HTTP 429 with `server_busy`; admitted requests release their slot even when a handler fails. Invalid configuration prevents startup.
 
 Every request uses the supplied `X-Request-ID` or a generated UUID. The ID is stored in Fiber locals as `request_id` and returned in the response header, including error responses. Each request produces a JSON log on stdout with timestamp, request ID, client IP, method, path, action, account ID, result, HTTP status, and latency in milliseconds. Successful account responses also log the committed balance. Request bodies, credentials, and bearer tokens are not logged. Logging wraps recovery and concurrency admission so rejected requests and handler errors are included.
 
