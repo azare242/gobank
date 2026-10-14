@@ -22,7 +22,7 @@ The server listens at `http://127.0.0.1:3000` and stores data in `users.db`. Ove
 
 ### Database selection and repositories
 
-Both servers use `DB_DRIVER`, which defaults to `sqlite`; `postgres` and `postgresql` select PostgreSQL.
+The HTTP server uses `DB_DRIVER`, which defaults to `sqlite`; `postgres` and `postgresql` select PostgreSQL.
 `DB_DSN` is a SQLite filename/URI or a PostgreSQL connection string. For SQLite,
 it takes precedence over `DB_PATH`. For PostgreSQL it is required; create the
 database before starting the server:
@@ -42,7 +42,7 @@ PostgreSQL uses a pool of up to 20 connections.
 interfaces. `NewGORM` implements them, translating missing and duplicate records
 into repository errors. HTTP handlers receive a `Store` through
 `api.NewWithRepository`; `api.New(db, tokens)` remains a compatibility wrapper.
-The shared banking service uses these repositories for HTTP and TCP operations.
+The banking service uses these repositories for HTTP operations.
 Profile queries omit password hashes; login queries include them.
 
 ```go
@@ -148,93 +148,3 @@ Set `MAX_CONCURRENT_REQUESTS` to a positive integer before starting the server (
 Every request uses the supplied `X-Request-ID` or a generated UUID. The ID is stored in Fiber locals as `request_id` and returned in the response header, including error responses. Each request produces a JSON log on stdout with timestamp, request ID, client IP, method, path, action, account ID, result, HTTP status, and latency in milliseconds. Successful account responses also log the committed balance. Request bodies, credentials, and bearer tokens are not logged. Logging wraps recovery and concurrency admission so rejected requests and handler errors are included.
 
 Deposits and withdrawals run inside GORM transactions. Withdrawals use an atomic conditional SQL decrement with `balance >= amount`; deposits use an atomic increment guarded against overflow. The updated balance is read inside the transaction and HTTP success is sent only after commit. Errors roll back the transaction. SQLite uses a single connection per process to serialize this application's writes, and the database enforces `CHECK(balance >= 0)`.
-
-
-## Alternative TCP server
-
-The Fiber HTTP server remains available through `go run ./cmd/server` with its
-existing JWT configuration. The additional TCP server uses persistent opaque
-sessions and does not require any JWT settings:
-
-```powershell
-$env:DB_PATH = "socket-users.db"
-go run ./cmd/socket-server
-```
-
-The default listener is `127.0.0.1:4000`. This is a custom framed protocol; see
-[the protocol specification](docs/socket-protocol.md) for operations, payloads,
-error mappings, framing and retry behavior. Start the interactive client in a
-second terminal:
-
-```powershell
-go run ./cmd/socket-client
-```
-
-The public menu offers Register, Login, Health check, and Exit. After login it
-offers My profile, Account balance, Deposit, Withdraw, Logout, and Exit.
-Passwords are hidden on terminals, sessions stay in client process memory, and
-money changes require confirmation. User listing and user lookup remain server
-operations and are intentionally absent from the menus. EOF/Ctrl+C attempts a
-bounded logout and closes the client. Failed logout clears local credentials and
-reports that the server session may remain until expiration or revocation.
-
-| Client flag | Default / purpose |
-| --- | --- |
-| -addr | 127.0.0.1:4000 |
-| -timeout | 15s; bounds dialing and each exchange |
-| -tls | false; enable verified TLS |
-| -ca | optional extra trusted PEM certificate/CA file; requires -tls |
-| -server-name | optional certificate hostname override; requires -tls |
-
-After a connection failure, the next selected operation reconnects with the
-in-memory session. An expired/revoked session returns the client to the public
-menu. Requests are never automatically replayed. A deposit/withdrawal that loses
-its response may have committed; the client offers a balance check after
-reconnecting. Request IDs provide correlation only, so checking the balance
-does not prove which request changed it when other clients are active.
-
-See [the client walkthrough and TLS setup](docs/socket-client.md). Browsers,
-`curl`, and `Invoke-RestMethod` cannot call this custom TCP protocol directly.
-
-| Setting | Default |
-| --- | --- |
-| DB_DRIVER | sqlite; postgres/postgresql also supported |
-| DB_DSN | unset; required for PostgreSQL, overrides DB_PATH for SQLite |
-| DB_PATH | users.db |
-| SOCKET_LISTEN_ADDR | 127.0.0.1:4000 |
-| MAX_CONCURRENT_REQUESTS | 100 |
-| SOCKET_MAX_CONNECTIONS | 256 |
-| SESSION_TTL | 15m (minimum 1s) |
-| SESSION_CLEANUP_INTERVAL | 1m |
-| SOCKET_READ_TIMEOUT | 30s, absolute per frame including TLS handshake |
-| SOCKET_WRITE_TIMEOUT | 10s |
-| SOCKET_OPERATION_TIMEOUT | 10s |
-| SOCKET_DRAIN_TIMEOUT | 15s |
-| SOCKET_TLS_CERT / SOCKET_TLS_KEY | unset; both required for TLS |
-
-Limits must be positive integers; durations use Go syntax such as `30s` or `15m`.
-Non-loopback listeners require TLS certificates. Set `SOCKET_TLS_CERT` and
-`SOCKET_TLS_KEY` to PEM certificate/key paths to enable TLS (minimum TLS 1.2).
-Clients must verify the certificate and hostname/IP; plaintext is for loopback
-development. The executable validates TLS material before opening the database.
-
-Termination stops acceptance and request admission, closes idle connections,
-drains active operations through the configured grace period, then cancels work
-and closes remaining connections. Handlers and session cleanup finish before
-the database closes. SQLite retains its single-connection setting. Login limits
-are per peer IP and process; sessions are stored in the selected database using token hashes,
-with expiration enforced on every lookup. Cleanup deletes at most 256 expired
-sessions per interval. Request IDs provide correlation, not deduplication.
-
-Validation for steps 1-9 is recorded in
-[the implementation record](docs/socket-implementation.md).
-The [benchmark report](docs/socket-benchmarks.md) compares real loopback HTTP and
-TCP requests, including latency, throughput, memory allocation and SQLite waits.
-
-```powershell
-go test ./...
-go test -race ./...
-go vet ./...
-go build ./cmd/server ./cmd/socket-server ./cmd/socket-client
-```
-
