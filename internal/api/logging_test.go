@@ -2,16 +2,17 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 )
 
-func TestStructuredRequestLogs(t *testing.T) {
+func TestReadableRequestLogs(t *testing.T) {
 	var output bytes.Buffer
 	requestLogger.SetOutput(&output)
 	defer requestLogger.SetOutput(os.Stdout)
@@ -38,24 +39,27 @@ func TestStructuredRequestLogs(t *testing.T) {
 		if resp.StatusCode != step.status {
 			t.Fatalf("status %d, want %d", resp.StatusCode, step.status)
 		}
-		var entry map[string]any
-		if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
-			t.Fatalf("invalid JSON log: %s: %v", output.String(), err)
+		line := output.String()
+		level := "INFO"
+		if step.status >= 500 {
+			level = "ERROR"
+		} else if step.status >= 400 {
+			level = "WARN"
 		}
-		if entry["request_id"] != "log-test" || entry["status_code"] != float64(step.status) || entry["path"] != step.path {
-			t.Fatalf("incorrect log: %v", entry)
-		}
-		for _, field := range []string{"timestamp", "client_ip", "action", "account", "result", "latency_ms"} {
-			if _, ok := entry[field]; !ok {
-				t.Fatalf("missing %s", field)
+		for _, field := range []string{fmt.Sprintf("| %-5s | %d | GET", level, step.status), fmt.Sprintf("%q", step.path), `request_id="log-test"`, "client_ip=", "action=", " ms |"} {
+			if !strings.Contains(line, field) {
+				t.Fatalf("missing %q in log: %s", field, line)
 			}
+		}
+		if strings.Count(line, "\n") != 1 {
+			t.Fatalf("expected one log line: %q", line)
 		}
 		if step.status == 200 {
-			if entry["account"] != "A1001" || entry["action"] != "balance" || entry["balance"] != float64(800) {
-				t.Fatalf("incorrect account log: %v", entry)
+			if !strings.Contains(line, `account="A1001" balance=800`) || !strings.Contains(line, `action="balance"`) || !strings.Contains(line, "result=success") {
+				t.Fatalf("incorrect account log: %s", line)
 			}
-		} else if entry["result"] != "error" {
-			t.Fatalf("incorrect error log: %v", entry)
+		} else if !strings.Contains(line, "result=error") || strings.Contains(line, "balance=") {
+			t.Fatalf("incorrect error log: %s", line)
 		}
 	}
 }

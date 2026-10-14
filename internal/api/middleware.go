@@ -1,7 +1,7 @@
 package api
 
 import (
-	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -55,18 +55,22 @@ func requestLog(handleError fiber.ErrorHandler) fiber.Handler {
 		if len(parts) == 3 && parts[0] == "accounts" {
 			account, action = parts[1], parts[2]
 		}
-		entry := map[string]any{
-			"timestamp":  start.UTC().Format(time.RFC3339Nano),
-			"request_id": c.Locals("request_id"), "client_ip": c.IP(),
-			"method": c.Method(), "path": c.Path(), "action": action,
-			"account": account, "result": result, "status_code": status,
-			"latency_ms": float64(time.Since(start).Microseconds()) / 1000,
+		level := "INFO"
+		if status >= 500 {
+			level = "ERROR"
+		} else if status >= 400 {
+			level = "WARN"
+		}
+		line := fmt.Sprintf("%s | %-5s | %d | %-7s %q | %8.3f ms | result=%s request_id=%q client_ip=%q action=%q",
+			start.UTC().Format("2006-01-02 15:04:05.000Z"), level, status, c.Method(), c.Path(),
+			float64(time.Since(start).Microseconds())/1000, result, c.Locals("request_id"), c.IP(), action)
+		if account != "" {
+			line += fmt.Sprintf(" account=%q", account)
 		}
 		if balance := c.Locals("balance"); balance != nil {
-			entry["balance"] = balance
+			line += fmt.Sprintf(" balance=%v", balance)
 		}
-		data, _ := json.Marshal(entry)
-		requestLogger.Print(string(data))
+		requestLogger.Print(line)
 		return err
 	}
 }

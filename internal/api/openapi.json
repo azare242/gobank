@@ -1,0 +1,2057 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Mini Banking API",
+    "version": "1.0.0",
+    "description": "Registration, JWT authentication, and account transactions. Amounts are integer currency units. All routes share a configurable concurrency limit (default 100). Request bodies are limited to 16 KiB. Unsupported account actions or methods return HTTP 400 with unsupported_action after authentication."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current server"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health"
+    },
+    {
+      "name": "Authentication"
+    },
+    {
+      "name": "Users"
+    },
+    {
+      "name": "Accounts"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Check server health",
+        "tags": [
+          "Health"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Check server health",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/users": {
+      "post": {
+        "operationId": "createUser",
+        "summary": "Register a user and create a zero-balance account",
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Register a user and create a zero-balance account",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing fields or invalid credentials (missing_field, malformed_request).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Username already exists (conflict).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 16 KiB limit (malformed_request).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listUsers",
+        "summary": "List all users",
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List all users",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/User"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired Bearer token (unauthorized).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Any authenticated user can read the user directory."
+      }
+    },
+    "/login": {
+      "post": {
+        "operationId": "login",
+        "summary": "Obtain a 15-minute access token",
+        "tags": [
+          "Authentication"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Obtain a 15-minute access token",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON body (malformed_request).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid username or password (unauthorized).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 16 KiB limit (malformed_request).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "operationId": "getCurrentUser",
+        "summary": "Get the authenticated user's profile",
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Get the authenticated user's profile",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired Bearer token (unauthorized).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "operationId": "getUser",
+        "summary": "Get a user by ID",
+        "tags": [
+          "Users"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Get a user by ID",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid user ID (malformed_request).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired Bearer token (unauthorized).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found (unsupported_action).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{id}/balance": {
+      "get": {
+        "operationId": "getBalance",
+        "summary": "Read your account balance",
+        "tags": [
+          "Accounts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Account ID belonging to the authenticated user.",
+            "schema": {
+              "type": "string",
+              "example": "A1001"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read your account balance",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Balance"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired Bearer token (unauthorized).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account not found or owned by another user (unknown_account).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Unknown accounts and accounts owned by another user both return 404."
+      }
+    },
+    "/accounts/{id}/deposit": {
+      "post": {
+        "operationId": "deposit",
+        "summary": "Deposit integer currency units",
+        "tags": [
+          "Accounts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Account ID belonging to the authenticated user.",
+            "schema": {
+              "type": "string",
+              "example": "A1001"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deposit integer currency units",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Balance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, missing amount, invalid amount, or deposit overflow (malformed_request, missing_field, invalid_amount).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired Bearer token (unauthorized).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account not found or owned by another user (unknown_account).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 16 KiB limit (malformed_request).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Unknown accounts and accounts owned by another user both return 404. Balance changes and their audit records commit atomically.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Amount"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{id}/withdraw": {
+      "post": {
+        "operationId": "withdraw",
+        "summary": "Withdraw integer currency units",
+        "tags": [
+          "Accounts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Account ID belonging to the authenticated user.",
+            "schema": {
+              "type": "string",
+              "example": "A1001"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Withdraw integer currency units",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Balance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON, missing amount, invalid amount, or deposit overflow (malformed_request, missing_field, invalid_amount).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or expired Bearer token (unauthorized).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account not found or owned by another user (unknown_account).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Insufficient balance (insufficient_funds).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "JSON body exceeds the 16 KiB limit (malformed_request).",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Concurrency limit reached (server_busy); login also permits 10 attempts per IP per minute.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Echoes the supplied request ID, or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "Created user resource path.",
+                "schema": {
+                  "type": "string",
+                  "example": "/users/1"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "no-store"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Unknown accounts and accounts owned by another user both return 404. Balance changes and their audit records commit atomically.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Amount"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "RequestID": {
+        "name": "X-Request-ID",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Optional correlation ID; returned in the response."
+      }
+    },
+    "schemas": {
+      "Credentials": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Trimmed, case-sensitive username.",
+            "example": "alice"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "writeOnly": true,
+            "description": "8–72 UTF-8 bytes (byte count, not character count).",
+            "example": "example-password"
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "account"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "example": 1
+          },
+          "username": {
+            "type": "string",
+            "example": "alice"
+          },
+          "account": {
+            "type": "string",
+            "description": "May be empty for users from older databases.",
+            "example": "A1001"
+          }
+        }
+      },
+      "Token": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expires_in": {
+            "type": "integer",
+            "enum": [
+              900
+            ]
+          }
+        }
+      },
+      "Amount": {
+        "type": "object",
+        "required": [
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9223372036854776000,
+            "description": "Positive integer currency units; fractions and strings are rejected.",
+            "example": 500
+          }
+        }
+      },
+      "Balance": {
+        "type": "object",
+        "required": [
+          "status",
+          "account",
+          "balance"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "success"
+            ]
+          },
+          "account": {
+            "type": "string",
+            "example": "A1001"
+          },
+          "balance": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "example": 500
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "status",
+          "error",
+          "message"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "error"
+            ]
+          },
+          "error": {
+            "type": "string",
+            "example": "insufficient_funds"
+          },
+          "message": {
+            "type": "string",
+            "example": "Account does not have enough balance"
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

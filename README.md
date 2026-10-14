@@ -82,6 +82,17 @@ enforce ownership, prevent overdrafts, and prevent integer overflow.
 
 ## Endpoints
 
+### Swagger documentation
+
+Open `http://127.0.0.1:3000/docs` for interactive Swagger UI. The OpenAPI 3.0
+specification is served at `/openapi.json` and maintained in
+`internal/api/openapi.json`; it is embedded in the server binary.
+
+Create a user with `POST /users`, sign in with `POST /login`, then click
+**Authorize** and enter the returned access token to try protected endpoints.
+Swagger UI loads its assets from a CDN, so viewing it requires internet access.
+The specification itself is available without internet access.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Check that the server is running |
@@ -175,6 +186,6 @@ Successful deposits and withdrawals insert their audit record in the same databa
 
 Set `MAX_CONCURRENT_REQUESTS` in `.env` to a positive integer before starting the server (default: 100). This limit applies to all HTTP routes, including signup, login, and health. Requests beyond the limit immediately receive HTTP 429 with `server_busy`; admitted requests release their slot even when a handler fails. Invalid configuration prevents startup.
 
-Every request uses the supplied `X-Request-ID` or a generated UUID. The ID is stored in Fiber locals as `request_id` and returned in the response header, including error responses. Each request produces a JSON log on stdout with timestamp, request ID, client IP, method, path, action, account ID, result, HTTP status, and latency in milliseconds. Successful account responses also log the committed balance. Request bodies, credentials, and bearer tokens are not logged. Logging wraps recovery and concurrency admission so rejected requests and handler errors are included.
+Every request uses the supplied `X-Request-ID` or a generated UUID. The ID is stored in Fiber locals as `request_id` and returned in the response header, including error responses. Each request produces a readable single-line log on stdout with aligned UTC timestamp, severity (INFO for success, WARN for 4xx, ERROR for 5xx), HTTP status, method/path, and latency in milliseconds, followed by labeled result, request ID, client IP, action, and account ID when applicable. String values are quoted and escaped to keep each request on one line. Successful account responses also log the committed balance. Request bodies, credentials, and bearer tokens are not logged. Logging wraps recovery and concurrency admission so rejected requests and handler errors are included.
 
 Deposits and withdrawals run inside GORM transactions. Withdrawals use an atomic conditional SQL decrement with `balance >= amount`; deposits use an atomic increment guarded against overflow. The updated balance is read inside the transaction and HTTP success is sent only after commit. Errors roll back the transaction. SQLite uses a single connection per process to serialize this application's writes, and the database enforces `CHECK(balance >= 0)`.

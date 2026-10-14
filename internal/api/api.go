@@ -61,6 +61,7 @@ func NewWithRepository(store repository.Store, tokens *auth.Service, configs ...
 	})
 	// Logging wraps recovery and admission so failures and rejected requests are logged.
 	app.Use(requestID(), requestLog(handleError), recover.New(), auditRequests(store), concurrentRequests(maxConcurrent))
+	registerDocs(app)
 	app.Get("/health", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
