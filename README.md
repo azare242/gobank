@@ -1,5 +1,9 @@
 # Mini Banking API
 
+For the implemented three-server fault-tolerance and network-partition bonuses,
+including VirtualBox setup, retrying client, and demonstration commands, see
+[BONOUS.md](BONOUS.md). The original single-server mode below remains available.
+
 A banking API built with Go, Fiber v3, and GORM, using SQLite or PostgreSQL. It supports registration, JWT authentication, account balances, deposits, and withdrawals, with ownership checks and audit logs for authentication attempts and money movements. Balance changes are atomic and prevent overdrafts and integer overflow.
 
 The pure-Go SQLite driver needs no C compiler. The `users`, `accounts`, and `audit_logs` tables are created automatically on startup. Usernames are unique, and passwords are stored as bcrypt hashes and omitted from API responses.
