@@ -1,0 +1,14 @@
+{
+  "id": "b",
+  "http": "0.0.0.0:3000",
+  "raft": "192.168.56.12:7000",
+  "data_dir": "data/b",
+  "bootstrap": false,
+  "max_concurrent_requests": 100,
+  "enable_demo_faults": true,
+  "peers": [
+    {"id":"a","raft":"192.168.56.11:7000","http":"http://192.168.56.11:3000"},
+    {"id":"b","raft":"192.168.56.12:7000","http":"http://192.168.56.12:3000"},
+    {"id":"c","raft":"192.168.56.13:7000","http":"http://192.168.56.13:3000"}
+  ]
+}
