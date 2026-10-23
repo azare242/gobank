@@ -1,0 +1,16 @@
+.git
+.agents
+.codex
+.aws
+.tools
+.env
+.env.*
+!.env.example
+bin
+data
+logs
+host-test-results
+*.db
+*.db-*
+*.jsonl
+*.pdf
