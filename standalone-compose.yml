@@ -1,8 +1,6 @@
 services:
   server:
-    build:
-      context: .
-      target: runtime
+    image: gobank:latest
     env_file:
       - .env
     environment:

@@ -597,10 +597,10 @@ Reference behavior: [HashiCorp Raft API](https://github.com/hashicorp/raft/blob/
 
 ### Standalone with PostgreSQL
 
-Set a valid `JWT_SECRET` and `POSTGRES_PASSWORD` in the root `.env` file (see `.env.example`), then run:
+Build the `gobank:latest` image once using `docker build -t gobank .`. Compose reuses this image without rebuilding it. Set a valid `JWT_SECRET` and `POSTGRES_PASSWORD` in the root `.env` file (see `.env.example`), then run:
 
 ```sh
-docker compose --env-file .env -f standalone-compose.yml up --build -d
+docker compose --env-file .env -f standalone-compose.yml up -d
 ```
 
 The server reads `.env` and always connects to the Compose PostgreSQL service, overriding any SQLite settings. PostgreSQL data persists in a named volume. The API is available on port 3000 by default; set `SERVER_PORT` to change the published port. PostgreSQL is only exposed inside the Compose network.
