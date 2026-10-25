@@ -592,3 +592,60 @@ For the submitted video (maximum five minutes), rehearse a prepared sequence: sh
 Keep the report within five A4 pages. Explain why majority commitment prevents split brain, why stable operation IDs prevent duplicate effects, why no majority means unavailability, how snapshots/replay recover state, and the exact commands/topology used. State that the third server is a full replica/voter and that either backup can become primary.
 
 Reference behavior: [HashiCorp Raft API](https://github.com/hashicorp/raft/blob/v1.7.3/api.go), [FSM/snapshot interface](https://github.com/hashicorp/raft/blob/v1.7.3/fsm.go), and [Raft algorithm paper](https://raft.github.io/raft.pdf).
+
+## Docker
+
+### Standalone with PostgreSQL
+
+Set a valid `JWT_SECRET` and `POSTGRES_PASSWORD` in the root `.env` file (see `.env.example`), then run:
+
+```sh
+docker compose --env-file .env -f standalone-compose.yml up --build -d
+```
+
+The server reads `.env` and always connects to the Compose PostgreSQL service, overriding any SQLite settings. PostgreSQL data persists in a named volume. The API is available on port 3000 by default; set `SERVER_PORT` to change the published port. PostgreSQL is only exposed inside the Compose network.
+
+```sh
+docker compose -f standalone-compose.yml down
+```
+
+Stopping the stack preserves database data.
+
+### Individual containers
+
+Build from the repository root:
+
+```sh
+docker build -t gobank .
+```
+
+Run the standalone server with the authentication settings from `.env` and persistent SQLite storage:
+
+```sh
+docker run --rm --env-file .env -e LISTEN_ADDR=0.0.0.0:3000 -e DB_PATH=/app/data/users.db -p 3000:3000 -v gobank-data:/app/data gobank
+```
+
+All three project commands are available. Override the default command to run the client:
+
+```sh
+docker run --rm --env-file .env gobank client -servers http://host.docker.internal:3000 -action balance
+```
+
+`host.docker.internal` is available with Docker Desktop. On Linux, add `--add-host host.docker.internal:host-gateway` when connecting to a server on the host.
+
+Run a cluster node with a mounted configuration:
+
+```sh
+docker run --rm --env-file .env -p 3000:3000 -p 7000:7000 -v gobank-node-a:/app/data -v "./deploy/cluster:/config:ro" gobank cluster-server -config /config/a.json
+```
+
+Before running a cluster, adapt each configuration's Raft bind address and peer addresses to your Docker network. The checked-in configurations use VM addresses (`192.168.56.*`) that containers do not own. Set `data_dir` to a path under `/app/data` for persistence, and ensure peer HTTP and Raft addresses are reachable from every node.
+
+The `build` stage also includes Go and the source tree for development commands:
+
+```sh
+docker build --target build -t gobank-dev .
+docker run --rm gobank-dev go test ./...
+```
+
+Secrets, local databases, and host binaries are excluded from the build context. The runtime image runs as UID 10001; bind-mounted data directories must be writable by that user.
