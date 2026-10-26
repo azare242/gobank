@@ -14,3 +14,6 @@ host-test-results
 *.db-*
 *.jsonl
 *.pdf
+
+__pycache__/
+*.pyc

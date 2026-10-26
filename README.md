@@ -1,9 +1,374 @@
 # Mini Banking API
 
-For the implemented three-server fault-tolerance and network-partition bonuses,
-including VirtualBox setup, retrying client, and demonstration commands, see the
-[bonus implementation and demo guide](#bonus-implementation-and-demo-guide) below.
-The original single-server mode is documented first.
+## Sharded deployment
+
+This guide runs the Gateway/Coordinator, four application replicas, and three PostgreSQL databases on one Docker host. All commands below run in **Bash from the repository root**. Standalone and Raft instructions follow later in this README.
+
+### 1. Prerequisites and service layout
+
+Install Docker Engine with Compose v2, OpenSSL, curl, jq, and Python 3. Install Go 1.26 or later if you want the native CLI or Go tests. Docker builds do not require Go on the host.
+
+```bash
+docker info >/dev/null
+docker compose version
+```
+
+Host port `127.0.0.1:3000` must be free. Stop an existing standalone/Raft server using that port before starting this stack.
+
+| Service | Purpose | Persistent storage |
+| --- | --- | --- |
+| `gateway` | Public HTTP API, routing, Coordinator, and recovery worker | Uses `db-coordinator` |
+| `shard-a1`, `shard-a2` | Replicas for `A0001`–`A1000` | Share `db-a` |
+| `shard-b1`, `shard-b2` | Replicas for `A1001`–`A2000` | Share `db-b` |
+| `db-a`, `db-b` | Authoritative shard databases | `a-data`, `b-data` volumes |
+| `db-coordinator` | Request registry, decisions, acknowledgments | `coordinator-data` volume |
+
+Only the Gateway publishes a host port. Shards and databases use the internal `bank` network; the Gateway also joins `edge`. All four replicas use the same `gobank-shard` image. The shard map is mounted read-only from [shards.json](deploy/sharded/shards.json).
+
+### 2. Create and retain configuration
+
+Create a dedicated environment file once. The following command refuses to overwrite an existing file:
+
+```bash
+if [ -e deploy/sharded/.env ]; then
+  echo 'Existing deploy/sharded/.env retained.'
+else
+  (
+    umask 077
+    {
+      printf 'COMPOSE_PROJECT_NAME=gobank-sharded\n'
+      printf 'VERSION=sharded\n'
+      printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)"
+      printf 'INTERNAL_TOKEN=%s\n' "$(openssl rand -hex 32)"
+      printf 'JWT_SECRET=%s\n' "$(openssl rand -base64 32)"
+      printf 'FIXTURE_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+      printf 'CRASH_AT=\n'
+    } > deploy/sharded/.env
+  )
+fi
+```
+
+The `.env` filename is ignored by Git. Keep this file protected and retain it with your deployment. Do not regenerate the database password when reusing existing volumes: PostgreSQL initialization variables do not change an existing database role's password.
+
+Load the file and define a Compose shortcut in **each new shell**:
+
+```bash
+set -a
+source deploy/sharded/.env
+set +a
+compose() {
+  docker compose --env-file deploy/sharded/.env \
+    -f deploy/sharded/compose.yml "$@"
+}
+export GATEWAY_URL=http://127.0.0.1:3000
+```
+
+Source only your own trusted file. Exporting these values also supplies the experiment script, which launches Compose subprocesses. Keep `COMPOSE_PROJECT_NAME` unchanged: it determines the names of your volumes and containers. If upgrading an existing deployment created under another project name, use that original name to retain its data.
+
+| Setting | Meaning |
+| --- | --- |
+| `POSTGRES_PASSWORD` | Shared demo database-role password; use URL-safe characters because DSNs contain it |
+| `INTERNAL_TOKEN` | At least 32 bytes; authenticates Gateway-to-shard commands |
+| `JWT_SECRET` | Standard base64 encoding of at least 32 random bytes |
+| `FIXTURE_PASSWORD` | 8–72 bytes; login password for all seeded demo identities |
+| `VERSION` | Tag shared by the two application images; `sharded` in this guide |
+| `COMPOSE_PROJECT_NAME` | Stable namespace for this deployment |
+| `CRASH_AT` | Empty normally; opt-in Coordinator crash injection |
+
+Compose supplies JWT issuer/audience, replica IDs, DSNs, and the mounted shard-map path. PostgreSQL starts with `max_prepared_transactions=100` and `max_connections=150`. Schema initialization and fixture insertion happen in the shard processes; no separate SQL import is needed.
+
+### 3. Build and start
+
+```bash
+compose config --quiet
+compose build gateway shard-a1
+compose up -d --no-build
+compose ps
+```
+
+Building `shard-a1` creates the shared shard image used by all four replicas. The default Dockerfile target is the legacy server image, so use the service builds above or the explicit `gateway`/`shard` targets.
+
+Wait for dependency readiness; container startup alone is not an application-readiness check:
+
+```bash
+ready=0
+for attempt in $(seq 1 60); do
+  if curl --fail --silent "$GATEWAY_URL/ready" >/dev/null; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+if [ "$ready" -ne 1 ]; then
+  echo 'Gateway not ready; inspect compose logs.' >&2
+else
+  curl --fail-with-body -sS "$GATEWAY_URL/ready" | jq
+fi
+```
+
+`/health` checks the process. `/ready` also requires the metadata database and at least one healthy replica in every shard. The API specification is at `$GATEWAY_URL/openapi.json`; this Gateway does not provide the legacy `/docs` Swagger UI.
+
+#### Build through v2rayN on port 10808
+
+Image pulls use the **Docker daemon's** HTTP/HTTPS proxy configuration. Set both daemon proxies to `http://127.0.0.1:10808` on a Linux host running v2rayN locally, and confirm the effective values with:
+
+```bash
+docker info --format '{{.HTTPProxy}} {{.HTTPSProxy}}'
+```
+
+Downloads inside Dockerfile `RUN` steps need separate build proxy arguments. On Linux, host networking lets those build steps reach the loopback proxy:
+
+```bash
+for role in gateway shard; do
+  docker build --network host \
+    --build-arg HTTP_PROXY=http://127.0.0.1:10808 \
+    --build-arg HTTPS_PROXY=http://127.0.0.1:10808 \
+    --build-arg http_proxy=http://127.0.0.1:10808 \
+    --build-arg https_proxy=http://127.0.0.1:10808 \
+    --target "$role" -t "gobank-$role:$VERSION" .
+done
+compose up -d --no-build
+```
+
+These proxy settings are for downloads, not runtime banking traffic. With Docker Desktop or a remote Docker daemon, use a proxy address reachable from that daemon/build environment rather than assuming its loopback is your host.
+
+### 4. Login and perform transfers
+
+Fixtures use the account ID as username and its numeric part as the global user ID. All accounts initially have 1000 units except `A1500`, which has 500. Reusing volumes retains subsequent balances. Public registration is unavailable in this mode.
+
+Log in as the source owner; acquire a destination-owner token to inspect both balances:
+
+```bash
+login() {
+  jq -nc --arg username "$1" --arg password "$FIXTURE_PASSWORD" \
+    '{username:$username,password:$password}' |
+    curl --fail-with-body -sS "$GATEWAY_URL/login" \
+      -H 'Content-Type: application/json' --data-binary @- |
+    jq -er '.access_token'
+}
+source_token=$(login A0500)
+destination_token=$(login A1500)
+
+curl --fail-with-body -sS "$GATEWAY_URL/accounts/A0500/balance" \
+  -H "Authorization: Bearer $source_token" | jq
+```
+
+Every mutation needs an `Idempotency-Key`. Generate it once and retain it for retries:
+
+```bash
+transfer_key=$(openssl rand -hex 16)
+transfer_reply=$(curl --fail-with-body -sS "$GATEWAY_URL/transfers" \
+  -H "Authorization: Bearer $source_token" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $transfer_key" \
+  -d '{"source":"A0500","destination":"A1500","amount":300}')
+printf '%s\n' "$transfer_reply" | jq
+transaction_id=$(printf '%s\n' "$transfer_reply" | jq -er '.transaction_id')
+```
+
+On a fresh database, a committed result leaves balances 700 and 800. Repeating the exact request/key has one financial effect; changing its payload with the same key conflicts. For a same-shard transfer, use `A0501` as destination with a **new** logical key. Deposits and withdrawals use `/accounts/A0500/deposit` or `/withdraw` with `{"amount":10}` and their own keys.
+
+Inspect the durable status and destination balance:
+
+```bash
+curl --fail-with-body -sS "$GATEWAY_URL/transactions/$transaction_id" \
+  -H "Authorization: Bearer $source_token" | jq
+curl --fail-with-body -sS "$GATEWAY_URL/accounts/A1500/balance" \
+  -H "Authorization: Bearer $destination_token" | jq
+```
+
+HTTP 202 means pending, not failed. Poll the transaction ID until `pending` is false and inspect `decision` and `outcome`. `COMPLETED` can mean either COMMIT or ABORT. If a response was lost before receiving an ID, retry the original payload/key. Never create a new key to resolve an uncertain transfer. Tokens expire after 15 minutes; log in again and keep the original operation identity.
+
+#### Native CLI and journal reconciliation
+
+```bash
+mkdir -p bin data
+go build -o bin/bank-client ./cmd/client
+export BANK_PASSWORD="$FIXTURE_PASSWORD"
+export BANK_TOKEN="$source_token"
+
+bin/bank-client -gateway "$GATEWAY_URL" -action balance
+bin/bank-client -gateway "$GATEWAY_URL" -action transfer \
+  -destination A1500 -amount 1 -journal data/source-journal.jsonl
+```
+
+Create the local journal directory first (`mkdir -p data`); the CLI does not create parent directories. Use a different journal for each source owner. The previous transfer of 300 and this CLI transfer of 1 are separate operations.
+
+```bash
+bin/bank-client -gateway "$GATEWAY_URL" -action status \
+  -transaction "$transaction_id"
+bin/bank-client -gateway "$GATEWAY_URL" -action reconcile \
+  -journal data/source-journal.jsonl
+```
+
+The CLI waits for terminal outcomes where possible; a deadline retains an uncertain operation in the journal. Reconcile that file after recovery. Journals with an incomplete final line are rejected; back up the file and remove only the incomplete line before replaying complete intents.
+
+For concurrent transfer traffic, use a fresh journal:
+
+```bash
+mkdir -p data
+workload_journal="data/transfer-$(date +%s)-journal.jsonl"
+bin/bank-client -gateway "$GATEWAY_URL" -action workload \
+  -destination A1500 -amount 1 -count 40 -workers 4 \
+  -interval 100ms -journal "$workload_journal"
+```
+
+That workload verifies the source balance against its own successful operations. Use the experiment suite or multi-account verification for conservation across both accounts. Do not run unrelated traffic on the same source while relying on the CLI's exact expected-balance check.
+
+For `-action verify`, provide a JSON file with `expected` (account-to-balance) and `tokens` (account-to-owner-JWT) maps. Store it under ignored `data/`, create it with permissions 0600, and supply expected values calculated from your reconciled workload rather than copying current balances. Then run:
+
+For a fresh dataset with only the 300-unit HTTP transfer, the 1-unit CLI transfer,
+and the 40 successful 1-unit workload transfers shown above, the expected pair
+is 659 and 841. If you ran the optional same-shard transfer or other traffic,
+calculate the corresponding expectations instead.
+
+```bash
+(
+  umask 077
+  jq -n --arg source "$source_token" --arg destination "$destination_token" \
+    '{expected:{A0500:659,A1500:841},tokens:{A0500:$source,A1500:$destination}}' \
+    > data/verification.json
+)
+bin/bank-client -gateway "$GATEWAY_URL" -action verify \
+  -verify-file data/verification.json
+```
+
+### 5. Experiments and failure recovery
+
+Use a dedicated demo stack: experiments change fixture balances and stop/recreate application containers. The exported environment, project name, image version, and `GATEWAY_URL` must refer to the same stack.
+
+```bash
+python3 scripts/assignment2/experiments.py all
+# Or run one scenario:
+python3 scripts/assignment2/experiments.py 6
+```
+
+| Scenario | Check |
+| --- | --- |
+| 1 | Account distribution, range boundaries, invalid IDs |
+| 2 | Requests reaching both replicas of one shard |
+| 3 | Concurrent local operations and duplicate keys |
+| 4 | Replica stop, fallback, and readmission |
+| 5 | Same-shard and cross-shard transfers, rollback |
+| 6 | Coordinator exits at four durable boundaries and recovery |
+| 7 | Opposing transfers, duplicate deliveries, replica interruption, conservation |
+
+The scripts do not delete database volumes. Scenario 6 clears crash injection when recreating the Gateway for recovery. Allow the script to finish; if interrupted, inspect `compose ps -a`, clear `CRASH_AT`, and restore stopped services with `compose up -d --no-build`.
+
+For manual replica interruption:
+
+```bash
+compose stop shard-a1
+curl --fail-with-body -sS "$GATEWAY_URL/accounts/A0500/balance" \
+  -H "Authorization: Bearer $source_token" -D -
+compose start shard-a1
+```
+
+Readiness probing readmits the restored replica. `compose start` starts existing containers; after `compose down`, use `compose up` instead.
+
+For a manual Coordinator crash after its durable decision:
+
+```bash
+export CRASH_AT=after_decision
+compose up -d --no-deps --force-recreate gateway
+# Submit a NEW cross-shard transfer with a retained operation key.
+# The Gateway exits with code 86 when the configured boundary is reached.
+compose ps -a gateway
+export CRASH_AT=
+compose up -d --no-deps --force-recreate gateway
+# Retry the original request/key or query its recorded transaction ID.
+```
+
+Other Coordinator values are `after_prepare`, `all_prepared`, and `after_ack`. The Compose variable applies to the Gateway; shard processes also support `after_prepare` and `after_finalize` when explicitly configured in a Compose override. Clear injection before restarting recovery. For a deliberate crash, `curl` may report an empty reply even though durable work exists.
+
+Recovery fences live processing with the same database session lock. Undecided distributed operations are durably aborted; recorded decisions are retried until both participants acknowledge. A recorded COMMIT never becomes ABORT because a shard is temporarily down. Prepared locks survive replica failure. Balance reads may see old committed values while prepares exist; reconcile pending work before checking totals. Do not manually finalize prepared transactions or delete metadata as a recovery shortcut.
+
+### 6. Inspect state and logs
+
+```bash
+compose logs --tail 100 gateway shard-a1 shard-a2
+compose logs -f gateway
+compose exec -T db-a psql -U bank -d bank -c \
+  "SELECT id,user_id,balance FROM bank_accounts WHERE id='A0500';"
+compose exec -T db-b psql -U bank -d bank -c \
+  "SELECT id,user_id,balance FROM bank_accounts WHERE id='A1500';"
+compose exec -T db-coordinator psql -U bank -d bank -c \
+  "SELECT id,status,decision,acks FROM bank_transactions ORDER BY updated_at DESC LIMIT 10;"
+compose exec -T db-a psql -U bank -d bank -c \
+  "SELECT gid,prepared FROM pg_prepared_xacts WHERE database=current_database();"
+```
+
+Repeat the prepared-inventory query on `db-b`. An unresolved prepared entry during an outage can be expected; after successful recovery there should be no unexpected orphan. Application logs include request, operation, transaction, shard, and replica identifiers. `compose config` without `--quiet` renders credentials, so avoid copying that output into reports or public logs.
+
+### 7. Restart, update, and reset
+
+```bash
+# Stop without removing containers; restart with the same credentials and data.
+compose stop
+compose start
+
+# Remove containers/networks, retaining all named database volumes.
+compose down
+compose up -d --no-build
+
+# Rebuild application images after source changes and replace their containers.
+compose build gateway shard-a1
+compose up -d --no-build
+```
+
+Keep the project name, all three volumes, shard map, and credentials together. Application redundancy does not provide database failover or host-failure protection. The static map is not a live migration mechanism.
+
+Only for an intentional clean demo reset, after stopping traffic and reconciling pending operations:
+
+```bash
+# DESTRUCTIVE: deletes BOTH shard databases AND Coordinator history.
+compose down -v
+compose up -d --no-build
+```
+
+Reset all three stores together. Reusing an old journal against reset databases does not recover its lost deduplication history; use fresh journals and operation keys for the new demo dataset.
+
+### 8. PostgreSQL integration tests
+
+These tests require a dedicated PostgreSQL URL, prepared transactions enabled, and a role allowed to create isolated test databases. Banking databases are not published to the host, so use a separate test container:
+
+```bash
+test_password=$(openssl rand -hex 24)
+docker run -d --name gobank-sharded-tests \
+  -e POSTGRES_PASSWORD="$test_password" \
+  -p 127.0.0.1:55432:5432 \
+  postgres:17-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27 \
+  -c max_prepared_transactions=100
+until docker exec gobank-sharded-tests pg_isready -U postgres >/dev/null 2>&1; do
+  sleep 1
+done
+export TEST_POSTGRES_DSN="postgres://postgres:$test_password@127.0.0.1:55432/postgres?sslmode=disable"
+go test ./...
+go test -race ./internal/coordinator ./internal/gateway ./internal/bankclient
+go vet ./...
+go mod verify
+```
+
+Tests create and remove isolated databases. Without `TEST_POSTGRES_DSN`, the PostgreSQL-specific tests skip; SQLite/Raft tests do not establish 2PC correctness. After testing, `docker stop gobank-sharded-tests` retains the test container, or `docker rm -f -v gobank-sharded-tests` intentionally removes it and its anonymous data volume.
+
+### Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| Compose reports a missing variable | Reload `deploy/sharded/.env` and use the `compose` helper |
+| Database password rejected after restart | Restore the password matching the existing volumes; changing an init variable does not rotate stored credentials |
+| Gateway port is occupied | Stop the other local banking mode or change the Gateway's published host port and `GATEWAY_URL` |
+| `/health` works but `/ready` returns 503 | Check both shard groups, Coordinator connectivity, and `compose logs` |
+| Replica exits at startup | Check its DSN, shard/replica IDs, readable map mount, and prepared-transaction setting |
+| Pulls work but `go mod download` fails during image build | Apply build proxy arguments as well as the daemon proxy |
+| HTTP 401 during journal reconciliation | Log in again, update `BANK_TOKEN`, and reuse the journal/key |
+| Transfer remains pending | Restore the original participant databases and Gateway; inspect decision/acks and retry status |
+| Unexpected repeated Gateway exit 86 | Clear the exported `CRASH_AT`, then recreate the Gateway |
+| Requests behave differently from the root standalone examples | Use this Gateway contract: fixtures replace registration, mutations require keys, and `/docs` is absent |
+
+## Standalone and Raft modes
+
+The standalone API is documented below. The [bonus implementation and demo guide](#bonus-implementation-and-demo-guide) covers the Assignment 1 replication mode. The [sharded deployment guide](#sharded-deployment) above covers the Docker Compose deployment.
 
 A banking API built with Go, Fiber v3, and GORM, using SQLite or PostgreSQL. It supports registration, JWT authentication, account balances, deposits, and withdrawals, with ownership checks and audit logs for authentication attempts and money movements. Balance changes are atomic and prevent overdrafts and integer overflow.
 
@@ -208,8 +573,7 @@ This implements the advanced bonus (automatic primary failure recovery) and extr
 | `internal/cluster/http.go` | Authenticated cluster banking API, committed reads, diagnostics and opt-in demo faults |
 | `cmd/cluster-server` | Cluster server with JSON node configuration and graceful shutdown |
 | `internal/bankclient`, `cmd/client` | Retrying client, concurrent workload, durable intent/outcome journal, reconciliation and balance verification |
-| `deploy/cluster/{a,b,c}.json` | Ready-to-edit configurations for three separate VMs |
-| `scripts/start-node.sh` | Start one server, save its PID, append logs to disk |
+| `deploy/cluster/{a,b,c}.json` | Node listener, peer, and storage configurations |
 | `scripts/cluster-status.sh` | Display roles and state digests across all servers |
 | `scripts/partition.sh` | Create/restore a real server-to-server TCP partition on Linux |
 | `scripts/core-demo.sh` | Normal operations, required errors, and actual SQL rollback demonstration |
@@ -230,122 +594,42 @@ Committed deposits, withdrawals, registration outcomes, and completed credential
 
 SQLite stores the last applied index so replay does not apply a previously persisted command twice. Snapshots include all application state and deduplication outcomes. Restore replaces that state atomically and later entries replay in order. A committed-entry persistence error fail-stops the process: it does not quietly continue as a divergent replica. Back up or restore a node's **entire data directory** with its process stopped; never copy only its application database into another node.
 
-The guarantees assume nonmalicious nodes, intact durable disks, one common cluster configuration, and eventual recovery of a majority. When no majority can communicate, service deliberately becomes unavailable. Four VMs on one host cannot survive failure of that physical host.
+The guarantees assume nonmalicious nodes, intact durable disks, one common cluster configuration, and eventual recovery of a majority. When no majority can communicate, service deliberately becomes unavailable. A single physical host remains a shared failure domain.
 
-### 1. Create the VirtualBox VMs
+### 1. Build the servers and client
 
-Use three minimal Linux server VMs and one Linux client VM. A starting allocation is 1–2 vCPUs and 1–2 GB RAM per server, 1 vCPU and 1 GB for the client, with 15–20 GB dynamically allocated disks. Adjust to the host's capacity.
-
-| VM | Host-only address | Services |
-| --- | --- | --- |
-| A | `192.168.56.11/24` | HTTP 3000, Raft TCP 7000 |
-| B | `192.168.56.12/24` | HTTP 3000, Raft TCP 7000 |
-| C | `192.168.56.13/24` | HTTP 3000, Raft TCP 7000 |
-| Client | `192.168.56.20/24` | CLI, curl, jq |
-
-Give every VM a NAT adapter for downloads and a second adapter on the **same Host-only Network**. Configure static addresses outside its DHCP pool, or use reservations. The host-only interface needs no default gateway. Generate fresh MAC addresses and hostnames if cloning VMs, and clone before initializing banking data. If this subnet conflicts with your network, change it everywhere in the JSON configurations and commands below.
-
-On Linux, install Git, curl, jq, OpenSSL, iptables, and a Go version compatible with `go.mod`. For Debian/Ubuntu, the non-Go packages can be installed with:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y git curl jq openssl iptables
-```
-
-Copy/clone the same project revision onto all VMs. On each VM, from the project directory:
+Run from the repository root with Go 1.26 or later:
 
 ```bash
 go mod download
-mkdir -p bin
+mkdir -p bin logs
 go build -o bin/cluster-server ./cmd/cluster-server
 go build -o bin/bank-client ./cmd/client
 ```
 
-Allow HTTP 3000 and TCP 7000 on the host-only lab interfaces if guest firewall policy blocks them. Do not run the cluster over the unrelated NAT addresses. Check `ip -br addr` on each VM and ping the host-only addresses from the client.
-
 ### 2. Configure and start servers
 
-Create `.env` on A using the existing example, then copy the same JWT settings securely to B and C:
+All three nodes must use the same `JWT_SECRET`, `JWT_ISSUER`, and `JWT_AUDIENCE`. Generate the key once using the standalone setup instructions and export the values before starting each node. Review `deploy/cluster/{a,b,c}.json`: bind addresses and peer addresses must be reachable in your deployment, and each node needs its own persistent data directory. If running multiple processes on one host, assign distinct HTTP and Raft ports and update every peer entry accordingly.
+
+`bootstrap` is true only on A and initializes membership only when no Raft state exists. Preserve each node's data directory across restarts. Start each node with its corresponding configuration:
 
 ```bash
-cp .env.example .env
-chmod 600 .env
-sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 32)|" .env
+# Run each command in its own terminal with the shared JWT settings exported.
+bin/cluster-server -config deploy/cluster/a.json > logs/a.log 2>&1 &
+echo $! > logs/a.pid
+
+bin/cluster-server -config deploy/cluster/b.json > logs/b.log 2>&1 &
+echo $! > logs/b.pid
+
+bin/cluster-server -config deploy/cluster/c.json > logs/c.log 2>&1 &
+echo $! > logs/c.pid
 ```
 
-All three servers must use the **same** `JWT_SECRET`, `JWT_ISSUER`, and `JWT_AUDIENCE`. Generate the key once; do not independently regenerate it per server. The cluster binary uses JSON configuration for listener/data paths; the `.env` database settings apply only to the original single-server binary.
+The client requires the three configured HTTP URLs in `BANK_SERVERS`, separated by commas. `scripts/cluster-status.sh` uses that variable to show roles. Expect one leader and two followers; a single voter cannot commit. `/cluster/status` is diagnostic and can be stale, while `/ready` requires a committed fence.
 
-Review `deploy/cluster/a.json`, `b.json`, and `c.json`. Each VM runs only its own node configuration. `bootstrap` is true only on A. It initializes the three-voter membership only when A has no Raft state; subsequent restarts reuse persisted state. Never enable bootstrap independently on B or C, erase a live node's directory, or create independent clusters to recover from a partition.
+### 3. Start and use the client
 
-The example configurations enable demo faults. This permits the explicit crash/rollback controls described below and authenticated leadership transfer/snapshot controls. Set `enable_demo_faults` to false outside the disposable experiment. The transport is plaintext and has no peer authentication: use only the isolated lab network, synthetic data, and lab credentials.
-
-Start from each VM's project directory:
-
-The start script uses NetworkManager (`nmcli`) and `sudo` to create or update the persistent `bank-lab` profile on `enp0s8`, then activates it before starting the server. It assigns `.11`, `.12`, or `.13` for A, B, or C respectively, with a `/24` prefix and no default gateway. These values assume the host-only adapter and subnet shown above; update the script too if your lab uses different settings.
-
-```bash
-## On A:
-bash scripts/start-node.sh a
-## On B:
-bash scripts/start-node.sh b
-## On C:
-bash scripts/start-node.sh c
-```
-
-Then, on the client VM:
-
-```bash
-export BANK_SERVERS=http://192.168.56.11:3000,http://192.168.56.12:3000,http://192.168.56.13:3000
-bash scripts/cluster-status.sh
-```
-
-Expect one `Leader` and two `Follower` nodes after a few seconds. A alone cannot commit because the configured cluster needs two voters. `/health` reports process liveness; `/ready` succeeds only after committing a fence, so use the leader URL when checking readiness. `/cluster/status` is deliberately a possibly stale diagnostic view; it is not a banking read or proof that a node can commit.
-
-### 3. Start and use the client VM
-
-The client is a command-line program: each invocation performs an action and exits, except a workload runs until its requested operations finish. There is no client server or background service to start. Do not run `scripts/start-node.sh` on the client VM; that script is only for servers A, B, and C.
-
-#### Configure the client network
-
-In VirtualBox, keep Adapter 1 on NAT and connect Adapter 2 to the same host-only network (`lab`) as the servers. On the client VM, check `ip -br addr`. For Mint with NetworkManager and the host-only interface named `enp0s8`, configure the client address once:
-
-```bash
-sudo nmcli connection add type ethernet \
-  con-name bank-lab ifname enp0s8 \
-  ipv4.method manual ipv4.addresses 192.168.56.20/24 \
-  ipv4.never-default yes connection.autoconnect yes
-sudo nmcli connection up bank-lab
-ip -br addr
-```
-
-If `bank-lab` already exists, update it instead of adding another profile:
-
-```bash
-sudo nmcli connection modify bank-lab connection.interface-name enp0s8 \
-  ipv4.method manual ipv4.addresses 192.168.56.20/24 \
-  ipv4.gateway '' ipv4.never-default yes connection.autoconnect yes
-sudo nmcli connection up bank-lab
-```
-
-Use your actual host-only interface name if it differs. `lab` is the VirtualBox network name; `bank-lab` is a connection profile inside the guest. The names do not need to match.
-
-#### Build and check connectivity
-
-On the client VM, from the project directory (for example `cd ~/gobank`):
-
-```bash
-go mod download -x
-mkdir -p bin
-go build -o bin/bank-client ./cmd/client
-./bin/bank-client -help
-export BANK_SERVERS=http://192.168.56.11:3000,http://192.168.56.12:3000,http://192.168.56.13:3000
-curl --connect-timeout 3 --max-time 5 http://192.168.56.11:3000/health
-curl --connect-timeout 3 --max-time 5 http://192.168.56.12:3000/health
-curl --connect-timeout 3 --max-time 5 http://192.168.56.13:3000/health
-bash scripts/cluster-status.sh
-```
-
-Start the servers on their own VMs first. Health responses should contain `status: "ok"` and the corresponding node ID; cluster status should eventually show one leader and two followers. On the client, `localhost` refers to the client VM, so use the servers' host-only addresses. The client does not need the servers' `.env` or JWT signing secret.
+The client is a command-line program, not a background service. Use a terminal with `BANK_SERVERS` set to the configured node URLs. The client needs its user's credentials, not the servers' JWT signing secret.
 
 #### Register, log in, and send requests
 
@@ -369,7 +653,7 @@ For continuous activity during the failover demonstration, run:
   -count 400 -workers 4 -interval 200ms -amount 1 -journal client-demo-journal.jsonl
 ```
 
-Use a fresh journal filename for each new workload. After opening a new terminal or restarting the client VM, export `BANK_SERVERS` and `BANK_PASSWORD` again, then repeat login and the token/account exports above. Keep existing journals for reconciliation; do not register the same username again just to restart the client.
+Use a fresh journal filename for each new workload. After opening a new terminal or restarting the client, export `BANK_SERVERS` and `BANK_PASSWORD` again, then repeat login and the token/account exports above. Keep existing journals for reconciliation; do not register the same username again just to restart the client.
 
 The client discovers your account through `/me` unless `-account` is given. Tokens expire after 15 minutes: log in again and export the fresh token before another demonstration, then reconcile pending requests using the same user. The client prints JSON; the login result intentionally contains the token so it can be captured into an environment variable. Do not include that value in screenshots or a public report.
 
@@ -419,7 +703,7 @@ Expect 10 successes, 10 `insufficient_funds` outcomes, final balance 0, and `ver
 
 ### 6. Advanced bonus: crash during active requests
 
-Open terminals for the client, A, B, and C. Show VM IPs, roles, and server logs (`tail -f logs/a.log`, etc.). Keep auto-restart services disabled for this experiment.
+Open terminals for the client, A, B, and C. Show node addresses, roles, and server logs (`tail -f logs/a.log`, etc.). Keep auto-restart services disabled for this experiment.
 
 1. On the client, start a workload long enough to make failure visible:
 
@@ -428,7 +712,7 @@ Open terminals for the client, A, B, and C. Show VM IPs, roles, and server logs 
      -count 400 -workers 4 -interval 200ms -amount 1 -journal crash-journal.jsonl
    ```
 
-2. While it is still printing operations, on A kill the actual server PID saved by the start script:
+2. While it is still printing operations, on A kill the actual server PID saved during startup:
 
    ```bash
    ps -p "$(cat logs/a.pid)" -o pid,args
@@ -443,10 +727,11 @@ Open terminals for the client, A, B, and C. Show VM IPs, roles, and server logs 
    ./bin/bank-client -servers "$BANK_SERVERS" -action reconcile -journal crash-journal.jsonl
    ```
 
-5. Restart A on A's VM:
+5. Restart node A:
 
    ```bash
-   bash scripts/start-node.sh a
+   bin/cluster-server -config deploy/cluster/a.json >> logs/a.log 2>&1 &
+   echo $! > logs/a.pid
    ```
 
    Wait for catch-up. All three diagnostic `state_digest` values should match after traffic stops; applied indexes may briefly differ because reads also append commands. A returns as a follower, rather than overwriting the current leader's balances.
@@ -461,7 +746,7 @@ The verifier counts logical operation IDs, not HTTP responses. Do not run unrela
 
 #### Confirmed data survives restart
 
-Record the balance after a successful CLI deposit, kill the current leader, let a backup serve a balance inquiry, restart the killed node, and query again. The cluster tests additionally cover stopping and reopening every node with its original data directory. Do not use VM snapshot rollback as a restart test: that deliberately rewinds disks.
+Record the balance after a successful CLI deposit, kill the current leader, let a backup serve a balance inquiry, restart the killed node, and query again. The cluster tests additionally cover stopping and reopening every node with its original data directory.
 
 #### Ambiguous response: commit, crash, retry once
 
@@ -497,7 +782,7 @@ Make sure all three servers are running/caught up and A is current leader. Start
   -count 400 -workers 4 -interval 200ms -amount 1 -journal partition-journal.jsonl
 ```
 
-While it is active, on **A's VM**, isolate A from both other voters:
+While it is active, on **node A's host**, isolate A from both other voters:
 
 ```bash
 sudo bash scripts/partition.sh on 192.168.56.12 192.168.56.13
@@ -549,7 +834,7 @@ While A remains isolated, stop C's process too. Now A is alone and B is alone: n
 
 ### 8. Client journals and interrupted runs
 
-The journal is append-only JSONL with intent and terminal-outcome records. Workload journals also contain a baseline. Keep them on the client VM, and keep one workload per journal/account. They contain no passwords or bearer tokens. Do not run two client processes against the same journal; the mutex only serializes workers within one process.
+The journal is append-only JSONL with intent and terminal-outcome records. Workload journals also contain a baseline. Keep them on the client machine, and keep one workload per journal/account. They contain no passwords or bearer tokens. Do not run two client processes against the same journal; the mutex only serializes workers within one process.
 
 The CLI checks `/me` and refuses journals belonging to another user/account before replaying intents. Keep journals associated with their original cluster as well; account IDs can repeat in a different, freshly initialized experiment.
 
@@ -570,9 +855,7 @@ After abrupt client termination, an incomplete last JSONL line is possible. The 
 
 If no baseline exists (ordinary single-operation journal), reconciliation reports unique-operation counts and net change but does not claim a final-balance invariant. With a workload baseline, it verifies the expected and actual balances and exits nonzero if they differ or operations remain pending.
 
-### 9. Tests and recording checklist
-
-Run:
+### 9. Tests and verification
 
 ```bash
 go mod verify
@@ -581,15 +864,9 @@ go vet ./...
 go build ./cmd/server ./cmd/cluster-server ./cmd/client
 ```
 
-The new automated tests cover durable deduplication/rejections, changed-payload conflicts, ownership/overflow, actual SQL rollback, disk-write failure atomicity, snapshots/replay, concurrent proposals, leader crash/retry, minority refusal, recovery/convergence, whole-cluster restart, API/auth/error behavior, and client retry after a lost HTTP response. Cluster integration tests simulate transport partitions between three Raft nodes; the separate VirtualBox/firewall demo is still required to establish the assignment's real network-failure scenario.
+The Raft tests cover deduplication, payload conflicts, ownership, overflow, SQL rollback, snapshots/replay, leader crash/retry, minority refusal, recovery/convergence, and whole-cluster restart. Cluster integration tests simulate transport partitions between three nodes. Use the configured deployment and partition helper for a separate process/network-level demonstration.
 
-The implementation can be checked locally, but the VM topology and real firewall interruption must be run on your VirtualBox guests. Do not claim they were demonstrated solely because the Go tests passed.
-
-Validation performed during implementation: the full Go test suite, `go vet ./...`, and `go mod verify` passed; the cluster failure tests passed three consecutive runs; all Bash scripts passed syntax checks. Both bonus binaries also cross-compiled successfully for Linux/amd64. A separate local three-process TCP smoke run used the actual CLI while hard-killing a leader, checked final accounting, exercised commit-before-reply crash plus duplicate retry, and restarted all servers including snapshot restore; those checks passed. The real VirtualBox/firewall demonstration has not been run here. This workspace's Git ownership differs from the sandbox user's ownership, so local build/test verification used the session-only `GOFLAGS=-buildvcs=false`; this did not change repository or global Git settings.
-
-For the submitted video (maximum five minutes), rehearse a prepared sequence: show VM IPs and roles; run normal/error/rollback commands; show concurrent operations and confirmed-state durability; kill the leader during an active workload and show automatic takeover; partition/reconnect the old leader while processes stay alive; finish with verified accounting, converged digests, and logs. Shorten workload counts/intervals to fit the recording after practicing. Include the ambiguous-response proof if time permits, and include its test evidence in the report.
-
-Keep the report within five A4 pages. Explain why majority commitment prevents split brain, why stable operation IDs prevent duplicate effects, why no majority means unavailability, how snapshots/replay recover state, and the exact commands/topology used. State that the third server is a full replica/voter and that either backup can become primary.
+The sharded mode has its own PostgreSQL integration tests and seven Compose experiments, documented in [Sharded deployment](#sharded-deployment).
 
 Reference behavior: [HashiCorp Raft API](https://github.com/hashicorp/raft/blob/v1.7.3/api.go), [FSM/snapshot interface](https://github.com/hashicorp/raft/blob/v1.7.3/fsm.go), and [Raft algorithm paper](https://raft.github.io/raft.pdf).
 
@@ -639,7 +916,7 @@ Run a cluster node with a mounted configuration:
 docker run --rm --env-file .env -p 3000:3000 -p 7000:7000 -v gobank-node-a:/app/data -v "./deploy/cluster:/config:ro" gobank cluster-server -config /config/a.json
 ```
 
-Before running a cluster, adapt each configuration's Raft bind address and peer addresses to your Docker network. The checked-in configurations use VM addresses (`192.168.56.*`) that containers do not own. Set `data_dir` to a path under `/app/data` for persistence, and ensure peer HTTP and Raft addresses are reachable from every node.
+For this legacy mode, adapt each configuration's Raft bind address and peer addresses to the container network. Set `data_dir` under `/app/data` for persistence. See the [bonus implementation and demo guide](#bonus-implementation-and-demo-guide) for configuration details; use the [sharded deployment guide](#sharded-deployment) for the current deployment.
 
 The `build` stage also includes Go and the source tree for development commands:
 

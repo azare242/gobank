@@ -18,15 +18,17 @@ import (
 )
 
 type record struct {
-	Kind    string            `json:"kind"`
-	ID      string            `json:"operation_id,omitempty"`
-	Action  string            `json:"action,omitempty"`
-	Account string            `json:"account,omitempty"`
-	Amount  int64             `json:"amount,omitempty"`
-	Initial int64             `json:"initial_balance,omitempty"`
-	Reply   *bankclient.Reply `json:"reply,omitempty"`
-	HTTP    int               `json:"http,omitempty"`
-	UserID  uint              `json:"user_id,omitempty"`
+	Kind          string            `json:"kind"`
+	ID            string            `json:"operation_id,omitempty"`
+	Action        string            `json:"action,omitempty"`
+	Account       string            `json:"account,omitempty"`
+	Destination   string            `json:"destination,omitempty"`
+	TransactionID string            `json:"transaction_id,omitempty"`
+	Amount        int64             `json:"amount,omitempty"`
+	Initial       int64             `json:"initial_balance,omitempty"`
+	Reply         *bankclient.Reply `json:"reply,omitempty"`
+	HTTP          int               `json:"http,omitempty"`
+	UserID        uint              `json:"user_id,omitempty"`
 }
 type journal struct {
 	mu sync.Mutex
@@ -55,7 +57,11 @@ func main() {
 }
 func run() error {
 	servers := flag.String("servers", "http://192.168.56.11:3000,http://192.168.56.12:3000,http://192.168.56.13:3000", "Comma-separated server URLs")
-	action := flag.String("action", "balance", "register, login, balance, deposit, withdraw, workload, reconcile")
+	verifyFile := flag.String("verify-file", "", "JSON file containing expected balances and owner tokens for multi-account verification")
+	gatewayURL := flag.String("gateway", "", "Single Assignment 2 Gateway URL (overrides -servers)")
+	destination := flag.String("destination", "", "Destination account for transfer or transfer workload")
+	transaction := flag.String("transaction", "", "Transaction ID for status/reconciliation")
+	action := flag.String("action", "balance", "register, login, balance, deposit, withdraw, transfer, status, workload, reconcile")
 	username := flag.String("username", "demo", "Username; password comes from BANK_PASSWORD")
 	account := flag.String("account", "", "Account ID (otherwise read /me)")
 	amount := flag.Int64("amount", 1, "Positive amount per mutation")
@@ -73,9 +79,18 @@ func run() error {
 	if *deadline <= 0 || *amount <= 0 || *count < 1 || *workers < 1 || *interval < 0 {
 		return fmt.Errorf("timeout, amount, count and workers must be positive; interval must be nonnegative")
 	}
+	if *gatewayURL != "" {
+		if strings.Contains(*gatewayURL, ",") {
+			return fmt.Errorf("-gateway accepts exactly one URL")
+		}
+		*servers = *gatewayURL
+	}
 	c, err := bankclient.New(*servers, os.Getenv("BANK_TOKEN"))
 	if err != nil {
 		return err
+	}
+	if (*action == "transfer" || *destination != "") && len(c.Servers) != 1 {
+		return fmt.Errorf("transfers require one Gateway URL; use -gateway")
 	}
 	request := func(method, path, id string, body []byte) (bankclient.Reply, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), *deadline)
@@ -108,8 +123,45 @@ func run() error {
 		}
 		return nil
 	}
+	if *action == "verify" {
+		if *gatewayURL == "" || *verifyFile == "" {
+			return fmt.Errorf("verify requires -gateway and -verify-file")
+		}
+		b, e := os.ReadFile(*verifyFile)
+		if e != nil {
+			return e
+		}
+		var config struct {
+			Expected map[string]int64  `json:"expected"`
+			Tokens   map[string]string `json:"tokens"`
+		}
+		if e = json.Unmarshal(b, &config); e != nil {
+			return e
+		}
+		if len(config.Expected) == 0 {
+			return fmt.Errorf("expected balances are required")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), *deadline)
+		defer cancel()
+		total, e := bankclient.VerifyBalances(ctx, *gatewayURL, config.Tokens, config.Expected)
+		if e != nil {
+			return e
+		}
+		output(map[string]any{"verified": true, "total": total.String(), "accounts": len(config.Expected)})
+		return nil
+	}
 	if c.Token == "" {
 		return fmt.Errorf("set BANK_TOKEN to the login access_token")
+	}
+	if *action == "status" {
+		if *transaction == "" {
+			return fmt.Errorf("-transaction is required")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), *deadline)
+		defer cancel()
+		r, e := c.TransactionStatus(ctx, *transaction)
+		output(r)
+		return e
 	}
 	var ownerID uint
 	{
@@ -137,7 +189,7 @@ func run() error {
 		}
 		return nil
 	}
-	if *action != "deposit" && *action != "withdraw" && *action != "workload" && *action != "reconcile" {
+	if *action != "deposit" && *action != "withdraw" && *action != "transfer" && *action != "workload" && *action != "reconcile" {
 		return fmt.Errorf("unsupported action %q", *action)
 	}
 	if *action == "workload" {
@@ -181,9 +233,25 @@ func run() error {
 			}
 		}
 		b, _ := json.Marshal(map[string]int64{"amount": r.Amount})
-		response, err := request("POST", "/accounts/"+r.Account+"/"+r.Action, r.ID, b)
+		route := "/accounts/" + r.Account + "/" + r.Action
+		if r.Action == "transfer" {
+			route = "/transfers"
+			b, _ = json.Marshal(map[string]any{"source": r.Account, "destination": r.Destination, "amount": r.Amount})
+		}
+		var response bankclient.Reply
+		var err error
+		if r.TransactionID != "" {
+			response, err = request("GET", "/transactions/"+r.TransactionID, "", nil)
+		} else {
+			response, err = request("POST", route, r.ID, b)
+		}
 		if err != nil {
-			output(map[string]string{"status": "pending", "operation_id": r.ID})
+			if response.TransactionID != "" {
+				if e := j.write(record{Kind: "pending", ID: r.ID, TransactionID: response.TransactionID}); e != nil {
+					return e
+				}
+			}
+			output(map[string]string{"status": "pending", "operation_id": r.ID, "transaction_id": response.TransactionID})
 			return err
 		}
 		if err = j.write(record{Kind: "outcome", ID: r.ID, Reply: &response, HTTP: response.HTTP}); err != nil {
@@ -202,6 +270,11 @@ func run() error {
 		for _, r := range recs {
 			if r.Kind == "intent" {
 				intents[r.ID] = r
+			}
+			if r.Kind == "pending" {
+				intent := intents[r.ID]
+				intent.TransactionID = r.TransactionID
+				intents[r.ID] = intent
 			}
 			if r.Kind == "outcome" {
 				done[r.ID] = true
@@ -226,11 +299,11 @@ func run() error {
 			return err
 		}
 		for _, old := range rows {
-			if old.Kind == "intent" && old.ID == op && (old.Action != *action || old.Account != *account || old.Amount != *amount) {
+			if old.Kind == "intent" && old.ID == op && (old.Action != *action || old.Account != *account || old.Amount != *amount || old.Destination != *destination) {
 				return fmt.Errorf("operation ID already journaled with another payload")
 			}
 		}
-		return execute(record{Kind: "intent", ID: op, Action: *action, Account: *account, Amount: *amount}, true)
+		return execute(record{Kind: "intent", ID: op, Action: *action, Account: *account, Destination: *destination, Amount: *amount}, true)
 	}
 	initial, err := request("GET", "/accounts/"+*account+"/balance", "", nil)
 	if err != nil {
@@ -257,7 +330,10 @@ func run() error {
 				if *pattern != "mixed" {
 					a = *pattern
 				}
-				if err := execute(record{Kind: "intent", ID: uuid.NewString(), Action: a, Account: *account, Amount: *amount}, true); err != nil {
+				if *destination != "" {
+					a = "transfer"
+				}
+				if err := execute(record{Kind: "intent", ID: uuid.NewString(), Action: a, Account: *account, Destination: *destination, Amount: *amount}, true); err != nil {
 					errs <- err
 				}
 				time.Sleep(*interval)
@@ -314,7 +390,7 @@ func verify(c *bankclient.Client, path string, request func(string, string, stri
 			copy := r
 			base = &copy
 		case "intent":
-			if old, ok := intents[r.ID]; ok && (old.Action != r.Action || old.Account != r.Account || old.Amount != r.Amount) {
+			if old, ok := intents[r.ID]; ok && (old.Action != r.Action || old.Account != r.Account || old.Amount != r.Amount || old.Destination != r.Destination) {
 				return fmt.Errorf("journal operation ID reused with another payload")
 			}
 			intents[r.ID] = r
