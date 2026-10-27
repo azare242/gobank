@@ -108,6 +108,56 @@ fi
 
 `/health` checks the process. `/ready` also requires the metadata database and at least one healthy replica in every shard. The API specification is at `$GATEWAY_URL/openapi.json`; this Gateway does not provide the legacy `/docs` Swagger UI.
 
+#### Optional: one image for all application roles
+
+The four published images separate the Gateway, shard server, migration worker,
+and healing controller. Four images are a packaging choice: you can also build
+one image containing all four binaries and select a command for each container.
+All shard replicas can use that same image with their own configuration.
+
+To build a combined image locally, create a separate Dockerfile that reuses the
+existing build stages (run from the repository root):
+
+```bash
+cp Dockerfile /tmp/gobank-all.Dockerfile
+cat >> /tmp/gobank-all.Dockerfile <<'EOF'
+
+FROM sharded-runtime AS all
+COPY --from=sharded-build /out/gateway /usr/local/bin/gateway
+COPY --from=sharded-build /out/shard-server /usr/local/bin/shard-server
+COPY --from=sharded-build /out/reshard /usr/local/bin/reshard
+COPY --from=healing-build /out/healing-controller /usr/local/bin/healing-controller
+CMD ["gateway"]
+EOF
+docker build -f /tmp/gobank-all.Dockerfile --target all -t gobank-all:v1 .
+```
+
+Use the proxy build arguments described below if downloads require them.
+`gobank-all:v1` is a local image built by this command; the Docker Hub repositories
+linked in the report contain the four separate role images.
+
+| Container role | Command after `gobank-all:v1` in `docker run` | Compose `command` |
+| --- | --- | --- |
+| Gateway/Coordinator | `gateway` | `["gateway"]` |
+| Shard replica | `shard-server` | `["shard-server"]` |
+| Migration worker | `reshard` | `["reshard"]` |
+| Healing controller | `healing-controller` | `["healing-controller"]` |
+
+For Compose, set each application service's `image` to `gobank-all:v1`, remove
+its `build` block, and set its `command` from the table. For example:
+
+```yaml
+image: gobank-all:v1
+command: ["shard-server"]
+```
+
+Retain the service's environment variables, networks, mounts, ports, and
+`depends_on` settings from the existing Compose files. The healing-controller
+service also needs `user: "0:0"`, its Docker socket mount, and its persistent
+state volume, as in the existing controller deployment. PostgreSQL continues to
+use its own image. Run each role in a separate container; choose its command
+at container startup rather than starting extra services with `docker exec`.
+
 #### Build through v2rayN on port 10808
 
 Image pulls use the **Docker daemon's** HTTP/HTTPS proxy configuration. Set both daemon proxies to `http://127.0.0.1:10808` on a Linux host running v2rayN locally, and confirm the effective values with:
@@ -998,9 +1048,8 @@ rejection, old-data cleanup, and absence of orphan prepares. Run it with the sam
 tests simulate interruptions by unwinding the worker; the Compose process-exit
 hooks are provided for the separate manual demo.
 
-The actual Compose process-crash demo has also passed all four boundaries. See
-[recorded evidence](docs/resharding/crash-recovery-demo.md). To repeat it against a
-fresh isolated project with prebuilt images:
+The actual Compose process-crash demo has also passed all four boundaries.
+To repeat it against a fresh isolated project with prebuilt images:
 
 ```sh
 python3 scripts/sharded/resharding_demo.py --env-file /path/to/demo.env --evidence /tmp/resharding-evidence
@@ -1102,4 +1151,4 @@ without duplicates, both replacements entering Gateway rotation, healthy
 container identities, exact balances, duplicate-request effects and zero orphan
 prepared transactions. It stops the controller and retains the stack and state
 volume for inspection. Evidence is written to `summary.json`, `controller.log`
-and `crashed-controller.log`. See [recorded results](docs/self-healing/demo.md).
+and `crashed-controller.log`.
