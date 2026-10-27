@@ -238,9 +238,9 @@ bin/bank-client -gateway "$GATEWAY_URL" -action verify \
 Use a dedicated demo stack: experiments change fixture balances and stop/recreate application containers. The exported environment, project name, image version, and `GATEWAY_URL` must refer to the same stack.
 
 ```bash
-python3 scripts/assignment2/experiments.py all
+python3 scripts/sharded/experiments.py all
 # Or run one scenario:
-python3 scripts/assignment2/experiments.py 6
+python3 scripts/sharded/experiments.py 6
 ```
 
 | Scenario | Check |
@@ -927,7 +927,7 @@ docker run --rm gobank-dev go test ./...
 
 Secrets, local databases, and host binaries are excluded from the build context. The runtime image runs as UID 10001; bind-mounted data directories must be writable by that user.
 
-### Assignment 2 Bonus I: live B-to-C re-sharding
+### Live B-to-C re-sharding
 
 The optional overlay enables persistent routing from the coordinator database.
 Start the deployment with this overlay from the beginning (with the same exported
@@ -936,11 +936,11 @@ its database and two replicas can be started later, while banking traffic runs.
 The existing static two-shard deployment still works without the overlay.
 
 ```sh
-docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml up -d --build
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/resharding.yml up -d --build
 # Later, while clients continue issuing deposits and transfers:
-docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml --profile reshard up -d db-c shard-c1 shard-c2
-docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml --profile reshard build reshard
-docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml --profile reshard run --rm reshard
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/resharding.yml --profile reshard up -d db-c shard-c1 shard-c2
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/resharding.yml --profile reshard build reshard
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/resharding.yml --profile reshard run --rm reshard
 ```
 
 The worker moves **A1501–A2000** from B to C. It is deliberately scoped to this
@@ -978,7 +978,7 @@ between trusted internal services and checked inside the account mutation.
 To inspect progress:
 
 ```sh
-docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml exec db-coordinator psql -U bank -d bank -c 'TABLE bank_migration; TABLE bank_routing;'
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/resharding.yml exec db-coordinator psql -U bank -d bank -c 'TABLE bank_migration; TABLE bank_routing;'
 ```
 
 For process-crash experiments, run the worker with
@@ -999,14 +999,107 @@ tests simulate interruptions by unwinding the worker; the Compose process-exit
 hooks are provided for the separate manual demo.
 
 The actual Compose process-crash demo has also passed all four boundaries. See
-[recorded evidence](docs/assignment2/bonus1-demo.md). To repeat it against a
+[recorded evidence](docs/resharding/crash-recovery-demo.md). To repeat it against a
 fresh isolated project with prebuilt images:
 
 ```sh
-python3 scripts/assignment2/bonus1_demo.py --env-file /path/to/demo.env --evidence /tmp/bonus1-evidence
+python3 scripts/sharded/resharding_demo.py --env-file /path/to/demo.env --evidence /tmp/resharding-evidence
 ```
 
 The env file must define the documented demo secrets, the image `VERSION`, and a
 unique `COMPOSE_PROJECT_NAME`. Optional `--override` and `--url` arguments allow
 an isolated Gateway port. The runner preserves demo containers and volumes for
 inspection and refuses a project that already has containers.
+
+## Bonus II: autonomous replica replacement
+
+The Go controller in `cmd/healing-controller` runs as a Docker Compose service.
+It checks replica container state and `/ready`; after the failure grace period,
+it creates a replacement with the original image ID, database environment,
+configuration mounts and internal network. Healthy replicas keep their identities.
+It uses the Docker Engine API directly, with no Docker CLI inside the image,
+additional Go dependencies, prebuilt healing tools or automatic restart policies.
+
+Export an explicit `COMPOSE_PROJECT_NAME` and the ordinary sharded deployment
+variables, then add the overlay from initial startup:
+
+```bash
+docker compose --env-file deploy/sharded/.env \
+  -f deploy/sharded/compose.yml -f deploy/sharded/self-healing.yml \
+  up -d --build
+```
+
+The image is `gobank-healing-controller:${VERSION:-assignment2}`; optionally set
+`HEALING_VERSION` to choose its tag independently. The dedicated Dockerfile
+`healing-controller` target builds this standard-library-only executable without
+module downloads. The existing Gateway and shard image targets are unchanged.
+
+The named `healing-state` volume stores `/data/state.json`, including desired
+per-shard counts, replica slots and immutable launch templates. State updates
+use a private temporary file, file sync, atomic rename and directory sync.
+A file lock prevents two controllers from using the same state. Deterministic
+replacement names and `io.gobank.healing.slot` labels support adoption after a
+crash, including between container creation and startup. Restart the controller
+with the same volume; do not remove its state while managed replicas exist.
+The state contains database credentials and is written with owner-only access.
+
+Replacements register each original service DNS alias on the bank network.
+The Gateway's existing probes admit that URL only once `/ready` succeeds, so
+banking and coordinator participant calls reach the new container without
+changing shard ownership or epochs. `X-Bank-Replica` identifies the logical slot;
+Docker container IDs identify individual replacements. Authoritative balances,
+idempotency records and prepared transactions remain in PostgreSQL.
+
+The service runs as root to access the mounted `/var/run/docker.sock`. Docker
+socket access grants control over the host daemon; deploy it only in the trusted
+assignment stack. Readiness probes run inside the bank network, so the controller
+needs no host access to bridge IP addresses. The demo driver still needs Python
+3 and the Docker CLI. Replicas must have one network and configuration bind
+mounts; the controller replaces applications, not databases or the Gateway.
+A database outage can cause repeated replacement of unready applications.
+Errors are isolated per slot so one failed repair does not block other slots.
+
+Default desired slots are A1, A2, B1 and B2. Bootstrap requires one existing
+Compose container per selected service, but later restarts use persisted state
+if the originals have disappeared. The configured slot set is fixed for a
+state volume; changing it is rejected. To include Bonus I's C replicas, start
+C first, then bootstrap fresh controller state with
+`HEALING_SERVICES=shard-a1,shard-a2,shard-b1,shard-b2,shard-c1,shard-c2`.
+Do not run two controllers over the same slots. The controller does not edit
+migration state. Simultaneous migration and healing have not been demonstrated.
+
+No restart policy restarts the controller itself. After a controller crash,
+start its Compose service again with the same volume; it reconciles durable
+state automatically. Stop it before intentionally stopping/recreating the stack:
+
+```bash
+docker compose --env-file deploy/sharded/.env \
+  -f deploy/sharded/compose.yml -f deploy/sharded/self-healing.yml \
+  stop healing-controller
+```
+
+Custom replacements carry healing labels rather than Compose service labels;
+`compose down` does not remove them. Inspect them with
+`docker ps -a --filter label=io.gobank.healing.slot`, then explicitly remove the
+selected containers when retiring a demo stack. Database volumes are preserved.
+
+Run the controller tests with `go test ./internal/healing`. The real-container
+demo needs prebuilt images, a fresh project name beginning with
+`gobank-healing-demo`, and an env file containing the deployment variables:
+
+```bash
+python3 scripts/sharded/self_healing_demo.py \
+  --env-file /path/to/healing-demo.env \
+  --evidence /tmp/healing-evidence
+# Optional: --override /path/to/ports.yml --url http://127.0.0.1:3103
+```
+
+The demo runs the Go controller under Compose, kills A1 during concurrent
+banking traffic, crashes the controller after replacement creation, recreates
+its Compose container with the same state volume, and pauses the adopted
+replica to exercise a running but unresponsive application. It checks adoption
+without duplicates, both replacements entering Gateway rotation, healthy
+container identities, exact balances, duplicate-request effects and zero orphan
+prepared transactions. It stops the controller and retains the stack and state
+volume for inspection. Evidence is written to `summary.json`, `controller.log`
+and `crashed-controller.log`. See [recorded results](docs/self-healing/demo.md).
