@@ -9,3 +9,9 @@ bin/
 data/
 logs/
 *-journal.jsonl
+
+__pycache__/
+*.pyc
+
+# Local LaTeX report sources and generated artifacts
+/report/

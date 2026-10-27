@@ -1,0 +1,654 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Assignment 2 Sharded Banking Gateway",
+    "version": "2.0.0",
+    "description": "PostgreSQL shards and durable two-phase commit. Only Gateway routes are public; participant APIs require an internal token and are confined to the private network."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Process is alive.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metadata database reachable and at least one healthy replica per shard.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Dependencies unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/login": {
+      "post": {
+        "security": [],
+        "description": "Seeded fixture identities only. Username is the canonical account ID; password is FIXTURE_PASSWORD. Signup is unavailable in Assignment 2.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Credentials"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JWT and fixture identity.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "access_token": {
+                      "type": "string"
+                    },
+                    "account": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Global fixture identity and canonical account ID."
+          },
+          "401": {
+            "description": "JWT required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{id}/balance": {
+      "get": {
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^A[0-9]{4}$"
+            }
+          }
+        ],
+        "description": "Owner-only snapshot read. PostgreSQL MVCC may return the previously committed balance while a transaction is prepared. Independent shard reads are not a simultaneous snapshot.",
+        "responses": {
+          "200": {
+            "description": "Committed balance snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or unowned account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Owning shard unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transfers": {
+      "post": {
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "User-scoped logical operation identity, shared across all accounts and mutation types. Reuse the same key on every retry; different payloads conflict."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Transfer"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Committed; cross-shard success requires both acknowledgments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Pending; query the transaction ID. A timeout never implies ABORT.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "JWT required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Terminal business rejection or conflicting idempotency key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable; retry with the original key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "description": "Owner-only durable status. Decision is immutable. An undecided transaction is aborted by recovery under a database session fence.",
+        "responses": {
+          "200": {
+            "description": "Durable lifecycle and final outcome.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or unowned transaction.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{id}/deposit": {
+      "post": {
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^A[0-9]{4}$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "User-scoped logical operation identity, shared across all accounts and mutation types. Reuse the same key on every retry; different payloads conflict."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Amount"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Committed; cross-shard success requires both acknowledgments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Pending; query the transaction ID. A timeout never implies ABORT.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "JWT required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Terminal business rejection or conflicting idempotency key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable; retry with the original key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{id}/withdraw": {
+      "post": {
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^A[0-9]{4}$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "description": "User-scoped logical operation identity, shared across all accounts and mutation types. Reuse the same key on every retry; different payloads conflict."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Amount"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Committed; cross-shard success requires both acknowledgments.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Pending; query the transaction ID. A timeout never implies ABORT.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "JWT required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Terminal business rejection or conflicting idempotency key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable; retry with the original key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Outcome"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Outcome": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "transaction_id": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "",
+              "COMMIT",
+              "ABORT"
+            ]
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "account": {
+            "type": "string"
+          },
+          "balance": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "Amount": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          }
+        }
+      },
+      "Transfer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "destination",
+          "amount"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "example": "A0500"
+          },
+          "destination": {
+            "type": "string",
+            "example": "A1500"
+          },
+          "amount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "example": 300
+          }
+        }
+      },
+      "Credentials": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "example": "A0500"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "properties": {
+          "transaction_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "INITIATED",
+              "PREPARING",
+              "PREPARED",
+              "COMMIT_DECIDED",
+              "ABORT_DECIDED",
+              "COMPLETED"
+            ]
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "",
+              "COMMIT",
+              "ABORT"
+            ]
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "acknowledgments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "shard_id": {
+                  "type": "string"
+                },
+                "prepared_gid": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

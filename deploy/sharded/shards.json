@@ -1,0 +1,1 @@
+{"shards":[{"id":"a","first":1,"last":1000,"replicas":["http://shard-a1:3000","http://shard-a2:3000"]},{"id":"b","first":1001,"last":2000,"replicas":["http://shard-b1:3000","http://shard-b2:3000"]}]}

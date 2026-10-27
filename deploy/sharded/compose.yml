@@ -1,0 +1,103 @@
+x-shard: &shard
+  image: gobank-shard:${VERSION:-assignment2}
+  build:
+    context: ../..
+    target: shard
+  volumes:
+    - ./shards.json:/app/shards.json:ro
+  networks: [bank]
+x-shard-env: &shard-env
+  SHARD_MAP: /app/shards.json
+  INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set INTERNAL_TOKEN}
+  SEED_FIXTURES: "true"
+x-db: &db
+  image: postgres:17-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+  command: [postgres, -c, max_prepared_transactions=100, -c, max_connections=150]
+  environment:
+    POSTGRES_USER: bank
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    POSTGRES_DB: bank
+  healthcheck:
+    test: [CMD-SHELL, pg_isready -U bank -d bank]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+  networks: [bank]
+services:
+  db-a:
+    <<: *db
+    volumes: [a-data:/var/lib/postgresql/data]
+  db-b:
+    <<: *db
+    volumes: [b-data:/var/lib/postgresql/data]
+  db-coordinator:
+    <<: *db
+    volumes: [coordinator-data:/var/lib/postgresql/data]
+  shard-a1:
+    <<: *shard
+    environment:
+      <<: *shard-env
+      SHARD_ID: a
+      REPLICA_ID: a1
+      DB_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-a:5432/bank?sslmode=disable
+    depends_on:
+      db-a: {condition: service_healthy}
+  shard-a2:
+    <<: *shard
+    environment:
+      <<: *shard-env
+      SHARD_ID: a
+      REPLICA_ID: a2
+      DB_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-a:5432/bank?sslmode=disable
+    depends_on:
+      db-a: {condition: service_healthy}
+  shard-b1:
+    <<: *shard
+    environment:
+      <<: *shard-env
+      SHARD_ID: b
+      REPLICA_ID: b1
+      DB_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-b:5432/bank?sslmode=disable
+    depends_on:
+      db-b: {condition: service_healthy}
+  shard-b2:
+    <<: *shard
+    environment:
+      <<: *shard-env
+      SHARD_ID: b
+      REPLICA_ID: b2
+      DB_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-b:5432/bank?sslmode=disable
+    depends_on:
+      db-b: {condition: service_healthy}
+  gateway:
+    image: gobank-gateway:${VERSION:-assignment2}
+    build:
+      context: ../..
+      target: gateway
+    environment:
+      SHARD_MAP: /app/shards.json
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      COORDINATOR_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-coordinator:5432/bank?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_ISSUER: gobank-assignment2
+      JWT_AUDIENCE: gobank-client
+      FIXTURE_PASSWORD: ${FIXTURE_PASSWORD:?set FIXTURE_PASSWORD}
+      CRASH_AT: ${CRASH_AT:-}
+    volumes:
+      - ./shards.json:/app/shards.json:ro
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [bank, edge]
+    depends_on:
+      db-coordinator: {condition: service_healthy}
+      shard-a1: {condition: service_started}
+      shard-a2: {condition: service_started}
+      shard-b1: {condition: service_started}
+      shard-b2: {condition: service_started}
+networks:
+  bank:
+    internal: true
+  edge: {}
+volumes:
+  a-data:
+  b-data:
+  coordinator-data:
