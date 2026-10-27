@@ -926,3 +926,87 @@ docker run --rm gobank-dev go test ./...
 ```
 
 Secrets, local databases, and host binaries are excluded from the build context. The runtime image runs as UID 10001; bind-mounted data directories must be writable by that user.
+
+### Assignment 2 Bonus I: live B-to-C re-sharding
+
+The optional overlay enables persistent routing from the coordinator database.
+Start the deployment with this overlay from the beginning (with the same exported
+secrets described above). Shard C is initially dormant and has no account range;
+its database and two replicas can be started later, while banking traffic runs.
+The existing static two-shard deployment still works without the overlay.
+
+```sh
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml up -d --build
+# Later, while clients continue issuing deposits and transfers:
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml --profile reshard up -d db-c shard-c1 shard-c2
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml --profile reshard build reshard
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml --profile reshard run --rm reshard
+```
+
+The worker moves **A1501–A2000** from B to C. It is deliberately scoped to this
+assignment's fixed range and an initially empty, dedicated C database. All six
+application replicas use the same shard image. Set `ROUTING_DSN` on every Gateway
+and shard when running outside Compose; the worker also needs `SOURCE_DSN` and
+`TARGET_DSN`. All processes read authoritative routing from PostgreSQL and fail
+closed if metadata is unavailable; no process restart activates the new map.
+
+The durable phases are `NEW → SNAPSHOT → REPLAY → FENCING → ACTIVATING → CLEANUP → DONE`.
+A repeatable-read snapshot copies the range and replay metadata while B remains
+writable. PostgreSQL triggers capture committed account and metadata changes in
+an append-only log. A transaction advisory lock serializes log allocation with
+commit order, including prepared transactions. Replay uses durable positions and
+idempotent upserts; its checkpoint advances only after C commits. A failed
+snapshot restarts from a new consistent snapshot and replays from zero. Audit,
+idempotency and participant records are copied so retries retain their identities;
+C holds only its own account balances. Historical non-account metadata is retained
+on B, and the durable change log is retained as migration evidence.
+
+Before cutover, the worker recovers unresolved coordinator decisions, acquires an
+exclusive admission fence for the migrating range, and verifies that no affected
+transaction is pending. Operations on other ranges continue. Account-row triggers
+hold a shared guard-row lock inside each mutation, including PostgreSQL prepared
+transactions. Fencing B therefore waits for those writes to resolve; an old epoch
+or a fenced owner cannot mutate the range, even through a deliberately stale
+internal request. A persisted cutover intent prevents reopening B after a crash.
+The worker drains changes, compares the copied account state, enables C, and
+atomically changes routing from epoch 1 to epoch 2. Only then does it delete B's
+old accounts and range audits and reopen admission. Range mutations briefly wait
+or return `range_cutover` during this final phase; retry the same idempotency key.
+Balance reads may need a retry while ownership changes. Epochs are passed only
+between trusted internal services and checked inside the account mutation.
+
+To inspect progress:
+
+```sh
+docker compose -f deploy/sharded/compose.yml -f deploy/sharded/bonus1.yml exec db-coordinator psql -U bank -d bank -c 'TABLE bank_migration; TABLE bank_routing;'
+```
+
+For process-crash experiments, run the worker with
+`-e MIGRATION_CRASH_AT=snapshot` (or `replay`, `fencing`, `activation`) on the
+`docker compose ... run --rm` command. It exits with code 86 at that boundary.
+Rerun without the variable to resume automatically from durable state. A stopped
+worker can be restarted with the same command; no repair SQL or ownership reset
+is required. Preserve **all four** database volumes across restarts, and keep the
+overlay enabled after migration. Do not reseed C or reset the routing database
+independently of the shard databases.
+
+`TestPostgresLiveReshardRecovery` exercises every crash boundary with real
+PostgreSQL, concurrent snapshot-time writes, local and cross-shard transfers,
+pre-existing durable COMMIT recovery, idempotent retries, stale-owner/epoch
+rejection, old-data cleanup, and absence of orphan prepares. Run it with the same
+`TEST_POSTGRES_DSN` requirements as the other Assignment 2 tests. These automated
+tests simulate interruptions by unwinding the worker; the Compose process-exit
+hooks are provided for the separate manual demo.
+
+The actual Compose process-crash demo has also passed all four boundaries. See
+[recorded evidence](docs/assignment2/bonus1-demo.md). To repeat it against a
+fresh isolated project with prebuilt images:
+
+```sh
+python3 scripts/assignment2/bonus1_demo.py --env-file /path/to/demo.env --evidence /tmp/bonus1-evidence
+```
+
+The env file must define the documented demo secrets, the image `VERSION`, and a
+unique `COMPOSE_PROJECT_NAME`. Optional `--override` and `--url` arguments allow
+an isolated Gateway port. The runner preserves demo containers and volumes for
+inspection and refuses a project that already has containers.

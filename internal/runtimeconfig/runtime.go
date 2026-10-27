@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/azare242/gobank/internal/repository"
+	"github.com/azare242/gobank/internal/reshard"
 	"github.com/azare242/gobank/internal/shardmap"
 )
 
@@ -51,4 +53,22 @@ func Serve(ctx context.Context, handler http.Handler) error {
 		return nil
 	}
 	return e
+}
+
+// Routing is opt-in; the original static deployment remains supported.
+func Routing(ctx context.Context, m *shardmap.Map) (func(), error) {
+	dsn := os.Getenv("ROUTING_DSN")
+	if dsn == "" {
+		return func() {}, nil
+	}
+	store, e := repository.OpenSQL(ctx, dsn)
+	if e != nil {
+		return nil, e
+	}
+	if e = reshard.Initialize(ctx, store.DB, m); e != nil {
+		store.DB.Close()
+		return nil, e
+	}
+	m.DB = store.DB
+	return func() { store.DB.Close() }, nil
 }

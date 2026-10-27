@@ -133,6 +133,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		httpbank.JSON(w, 200, out)
 	})
-	mux.Handle("/internal/", httpbank.Internal(s.Secret, internal))
+	withEpoch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		internal.ServeHTTP(w, r.WithContext(repository.WithEpoch(r.Context(), r.Header.Get("X-Shard-Epoch"))))
+	})
+	mux.Handle("/internal/", httpbank.Internal(s.Secret, withEpoch))
 	return httpbank.Log(s.ShardID, s.ReplicaID, mux)
 }

@@ -159,6 +159,11 @@ func (c *Coordinator) Process(ctx context.Context, m repository.Mutation) (Recor
 		return r, e
 	}
 	defer conn.Close()
+	rangeUnlock, rangeErr := c.rangeFence(ctx, conn, m)
+	if rangeErr != nil {
+		return r, rangeErr
+	}
+	defer rangeUnlock()
 	// Lock the user-scoped request identity before inserting: recovery cannot see
 	// an INITIATED row and race its creator before that creator acquires its fence.
 	identity := fmt.Sprintf("%d:%s", m.UserID, m.Key)
@@ -338,6 +343,11 @@ func (c *Coordinator) recoverOne(ctx context.Context, r Record) error {
 		return e
 	}
 	defer conn.Close()
+	rangeUnlock, rangeErr := c.rangeFence(ctx, conn, r.Mutation)
+	if rangeErr != nil {
+		return rangeErr
+	}
+	defer rangeUnlock()
 	unlock, e := c.lock(ctx, conn, fmt.Sprintf("%d:%s", r.Mutation.UserID, r.Mutation.Key))
 	if e != nil {
 		return e
@@ -361,4 +371,34 @@ func (c *Coordinator) Run(ctx context.Context) {
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// Range admission shares the migration cutover fence across all gateways.
+func (c *Coordinator) rangeFence(ctx context.Context, conn *sql.Conn, m repository.Mutation) (func(), error) {
+	noop := func() {}
+	affected := func(a string) bool { return a >= "A1501" && a <= "A2000" }
+	if c.Map.DB == nil || (!affected(m.Source) && !affected(m.Destination)) {
+		return noop, nil
+	}
+	key := "bonus1:A1501-A2000"
+	if _, e := conn.ExecContext(ctx, `SELECT pg_advisory_lock_shared(hashtextextended($1,0))`, key); e != nil {
+		return noop, e
+	}
+	unlock := func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if _, e := conn.ExecContext(cleanup, `SELECT pg_advisory_unlock_shared(hashtextextended($1,0))`, key); e != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}
+	var phase string
+	if e := conn.QueryRowContext(ctx, `SELECT phase FROM bank_migration WHERE id=1`).Scan(&phase); e != nil {
+		unlock()
+		return noop, e
+	}
+	if phase == "FENCING" || phase == "ACTIVATING" || phase == "CLEANUP" {
+		unlock()
+		return noop, serviceerr.New(503, "range_cutover")
+	}
+	return unlock, nil
 }

@@ -3,7 +3,7 @@ package shardmap
 import "testing"
 
 func TestRangesAndValidation(t *testing.T) {
-	m := Map{[]Shard{{"a", 1, 1000, []string{"http://a1:3000", "http://a2:3000"}}, {"b", 1001, 2000, []string{"http://b1:3000", "http://b2:3000"}}}}
+	m := Map{Shards: []Shard{{"a", 1, 1000, []string{"http://a1:3000", "http://a2:3000"}}, {"b", 1001, 2000, []string{"http://b1:3000", "http://b2:3000"}}}}
 	if e := m.Validate(); e != nil {
 		t.Fatal(e)
 	}

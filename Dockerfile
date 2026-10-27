@@ -26,7 +26,8 @@ CMD ["server"]
 # Assignment 2 targets use the shared source/build cache, with one role per image.
 FROM build AS assignment2-build
 RUN CGO_ENABLED=0 go build -o /out/gateway ./cmd/gateway \
-    && CGO_ENABLED=0 go build -o /out/shard-server ./cmd/shard-server
+    && CGO_ENABLED=0 go build -o /out/shard-server ./cmd/shard-server \
+    && CGO_ENABLED=0 go build -o /out/reshard ./cmd/reshard
 
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS assignment2-runtime
 RUN apt-get update \
@@ -44,6 +45,10 @@ ENTRYPOINT ["gateway"]
 FROM assignment2-runtime AS shard
 COPY --from=assignment2-build /out/shard-server /usr/local/bin/shard-server
 ENTRYPOINT ["shard-server"]
+
+FROM assignment2-runtime AS reshard
+COPY --from=assignment2-build /out/reshard /usr/local/bin/reshard
+ENTRYPOINT ["reshard"]
 
 # Preserve the default Assignment 1 image used by standalone-compose.yml.
 FROM runtime AS legacy

@@ -88,7 +88,23 @@ func (s *SQLStore) Balance(ctx context.Context, user uint, id string) (Outcome, 
 	}
 	return o, e
 }
+
+type epochKey struct{}
+
+func WithEpoch(ctx context.Context, epoch string) context.Context {
+	return context.WithValue(ctx, epochKey{}, epoch)
+}
+func Epoch(ctx context.Context) string {
+	if v, ok := ctx.Value(epochKey{}).(string); ok && v != "" {
+		return v
+	}
+	return "1"
+}
 func ConfigureTx(ctx context.Context, tx *sql.Tx) error {
+	if _, e := tx.ExecContext(ctx, `SELECT set_config('bank.epoch',$1,true)`, Epoch(ctx)); e != nil {
+		return e
+	}
+
 	_, e := tx.ExecContext(ctx, `SET LOCAL lock_timeout='1500ms'; SET LOCAL statement_timeout='4s'`)
 	return e
 }
