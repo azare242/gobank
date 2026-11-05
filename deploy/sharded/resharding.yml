@@ -1,0 +1,86 @@
+# Add to compose.yml from initial startup; C and the worker start on demand.
+x-routing: &routing
+  ROUTING_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-coordinator:5432/bank?sslmode=disable
+x-c: &c
+  image: gobank-shard:${VERSION:-assignment2}
+  profiles: [reshard]
+  volumes: [./resharding-shards.json:/app/shards.json:ro]
+  networks: [bank]
+  depends_on:
+    db-c: {condition: service_healthy}
+x-c-env: &c-env
+  <<: *routing
+  SHARD_MAP: /app/shards.json
+  INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+  SHARD_ID: c
+  SEED_FIXTURES: "false"
+  DB_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-c:5432/bank?sslmode=disable
+services:
+  gateway:
+    environment: *routing
+    volumes: [./resharding-shards.json:/app/shards.json:ro]
+  shard-a1:
+    environment: *routing
+    volumes: [./resharding-shards.json:/app/shards.json:ro]
+    depends_on:
+      db-coordinator: {condition: service_healthy}
+  shard-a2:
+    environment: *routing
+    volumes: [./resharding-shards.json:/app/shards.json:ro]
+    depends_on:
+      db-coordinator: {condition: service_healthy}
+  shard-b1:
+    environment: *routing
+    volumes: [./resharding-shards.json:/app/shards.json:ro]
+    depends_on:
+      db-coordinator: {condition: service_healthy}
+  shard-b2:
+    environment: *routing
+    volumes: [./resharding-shards.json:/app/shards.json:ro]
+    depends_on:
+      db-coordinator: {condition: service_healthy}
+  db-c:
+    profiles: [reshard]
+    image: postgres:17-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+    command: [postgres, -c, max_prepared_transactions=100, -c, max_connections=150]
+    environment:
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: bank
+    volumes: [c-data:/var/lib/postgresql/data]
+    networks: [bank]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U bank -d bank]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  shard-c1:
+    <<: *c
+    environment:
+      <<: *c-env
+      REPLICA_ID: c1
+  shard-c2:
+    <<: *c
+    environment:
+      <<: *c-env
+      REPLICA_ID: c2
+  reshard:
+    profiles: [reshard]
+    image: gobank-reshard:${VERSION:-assignment2}
+    build:
+      context: ../..
+      target: reshard
+    environment:
+      <<: *routing
+      SHARD_MAP: /app/shards.json
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      SOURCE_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-b:5432/bank?sslmode=disable
+      TARGET_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-c:5432/bank?sslmode=disable
+      MIGRATION_CRASH_AT: ${MIGRATION_CRASH_AT:-}
+    volumes: [./resharding-shards.json:/app/shards.json:ro]
+    networks: [bank]
+    depends_on:
+      shard-c1: {condition: service_started}
+      shard-c2: {condition: service_started}
+volumes:
+  c-data:

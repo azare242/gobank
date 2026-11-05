@@ -29,6 +29,11 @@ func run() error {
 	if e != nil {
 		return e
 	}
+	closeRouting, e := runtimeconfig.Routing(startup, m)
+	if e != nil {
+		return e
+	}
+	defer closeRouting()
 	tokens, e := auth.FromEnv()
 	if e != nil {
 		return e

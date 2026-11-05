@@ -173,6 +173,9 @@ func (p *Participant) Prepare(ctx context.Context, cmd Command) (Status, error) 
 			defer cancel()
 			_, _ = c.ExecContext(cleanup, "ROLLBACK")
 		}()
+		if _, e = c.ExecContext(ctx, `SELECT set_config('bank.epoch',$1,true)`, repository.Epoch(ctx)); e != nil {
+			return e
+		}
 		account := cmd.Source
 		if role == "credit" {
 			account = cmd.Destination

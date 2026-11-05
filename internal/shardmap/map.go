@@ -1,12 +1,15 @@
-// Package shardmap validates the static ownership map shared by gateways and shards.
+// Package shardmap validates ownership and reads optional durable routing epochs.
 package shardmap
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 )
 
 type Shard struct {
@@ -17,6 +20,7 @@ type Shard struct {
 }
 type Map struct {
 	Shards []Shard `json:"shards"`
+	DB     *sql.DB `json:"-"`
 }
 
 func Number(account string) (int, error) {
@@ -53,11 +57,11 @@ func (m *Map) Validate() error {
 	ids := map[string]bool{}
 	urls := map[string]bool{}
 	for _, s := range m.Shards {
-		if s.ID == "" || ids[s.ID] || s.First < 1 || s.Last > 2000 || s.First > s.Last || len(s.Replicas) < 2 {
+		if s.ID == "" || ids[s.ID] || (s.First < 1 && (s.First != 0 || s.Last != 0)) || s.Last > 2000 || s.First > s.Last || len(s.Replicas) < 2 {
 			return fmt.Errorf("invalid shard configuration: %s", s.ID)
 		}
 		ids[s.ID] = true
-		for n := s.First; n <= s.Last; n++ {
+		for n := s.First; n >= 1 && n <= s.Last; n++ {
 			if covered[n] {
 				return fmt.Errorf("overlapping account ranges")
 			}
@@ -83,7 +87,11 @@ func (m *Map) Owner(account string) (Shard, error) {
 	if e != nil {
 		return Shard{}, e
 	}
-	for _, s := range m.Shards {
+	shards, _, e := m.Current()
+	if e != nil {
+		return Shard{}, e
+	}
+	for _, s := range shards {
 		if n >= s.First && n <= s.Last {
 			return s, nil
 		}
@@ -91,10 +99,32 @@ func (m *Map) Owner(account string) (Shard, error) {
 	return Shard{}, fmt.Errorf("unmapped account")
 }
 func (m *Map) ByID(id string) (Shard, error) {
-	for _, s := range m.Shards {
+	shards, _, e := m.Current()
+	if e != nil {
+		return Shard{}, e
+	}
+	for _, s := range shards {
 		if s.ID == id {
 			return s, nil
 		}
 	}
 	return Shard{}, fmt.Errorf("unknown shard %q", id)
+}
+
+// Current reads the authoritative durable epoch. A metadata outage fails closed.
+func (m *Map) Current() ([]Shard, int64, error) {
+	if m.DB == nil {
+		return m.Shards, 1, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var b []byte
+	var epoch int64
+	e := m.DB.QueryRowContext(ctx, "SELECT shards,epoch FROM bank_routing WHERE id=1").Scan(&b, &epoch)
+	if e != nil {
+		return nil, 0, e
+	}
+	var shards []Shard
+	e = json.Unmarshal(b, &shards)
+	return shards, epoch, e
 }

@@ -30,7 +30,11 @@ func NewPool(m *shardmap.Map, secret string) *Pool {
 }
 func (p *Pool) Probe(ctx context.Context) {
 	var wg sync.WaitGroup
-	for _, s := range p.Map.Shards {
+	shards, _, e := p.Map.Current()
+	if e != nil {
+		return
+	}
+	for _, s := range shards {
 		for _, base := range s.Replicas {
 			wg.Add(1)
 			go func(base string) {
@@ -67,7 +71,14 @@ func (p *Pool) Run(ctx context.Context) {
 func (p *Pool) Ready() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, s := range p.Map.Shards {
+	shards, _, e := p.Map.Current()
+	if e != nil {
+		return false
+	}
+	for _, s := range shards {
+		if s.First == 0 && s.Last == 0 {
+			continue
+		}
 		ok := false
 		for _, u := range s.Replicas {
 			ok = ok || p.healthy[u]
@@ -115,6 +126,11 @@ func (p *Pool) Call(ctx context.Context, shard, path string, input, output any) 
 		if e != nil {
 			return "", e
 		}
+		_, epoch, err := p.Map.Current()
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("X-Shard-Epoch", fmt.Sprint(epoch))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Internal-Token", p.Secret)
 		req.Header.Set("X-Request-ID", httpbank.RequestID(ctx))

@@ -1,0 +1,24 @@
+# Add to compose.yml. Recovery logic belongs to the Go controller, not Docker.
+services:
+  healing-controller:
+    image: gobank-healing-controller:${HEALING_VERSION:-${VERSION:-assignment2}}
+    build:
+      context: ../..
+      target: healing-controller
+    restart: "no"
+    environment:
+      HEALING_PROJECT: ${COMPOSE_PROJECT_NAME:?set COMPOSE_PROJECT_NAME explicitly}
+      HEALING_SERVICES: ${HEALING_SERVICES:-shard-a1,shard-a2,shard-b1,shard-b2}
+      HEALING_CRASH_AT: ${HEALING_CRASH_AT:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - healing-state:/data
+    networks: [bank]
+    depends_on:
+      shard-a1: {condition: service_started}
+      shard-a2: {condition: service_started}
+      shard-b1: {condition: service_started}
+      shard-b2: {condition: service_started}
+    stop_grace_period: 40s
+volumes:
+  healing-state:

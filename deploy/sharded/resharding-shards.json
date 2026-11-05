@@ -1,0 +1,31 @@
+{
+  "shards": [
+    {
+      "id": "a",
+      "first": 1,
+      "last": 1000,
+      "replicas": [
+        "http://shard-a1:3000",
+        "http://shard-a2:3000"
+      ]
+    },
+    {
+      "id": "b",
+      "first": 1001,
+      "last": 2000,
+      "replicas": [
+        "http://shard-b1:3000",
+        "http://shard-b2:3000"
+      ]
+    },
+    {
+      "id": "c",
+      "first": 0,
+      "last": 0,
+      "replicas": [
+        "http://shard-c1:3000",
+        "http://shard-c2:3000"
+      ]
+    }
+  ]
+}
