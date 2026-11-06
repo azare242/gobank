@@ -1,7 +1,8 @@
 # Add to compose.yml. Recovery logic belongs to the Go controller, not Docker.
 services:
   healing-controller:
-    image: gobank-healing-controller:${HEALING_VERSION:-${VERSION:-assignment2}}
+    image: ${HEALING_IMAGE:-gobank-healing-controller:${HEALING_VERSION:-${VERSION:-assignment2}}}
+    pull_policy: ${IMAGE_PULL_POLICY:-missing}
     build:
       context: ../..
       target: healing-controller

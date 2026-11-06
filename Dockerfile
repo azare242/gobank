@@ -1,4 +1,4 @@
-FROM golang:1.26@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS build
+FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -29,7 +29,7 @@ RUN CGO_ENABLED=0 go build -o /out/gateway ./cmd/gateway \
     && CGO_ENABLED=0 go build -o /out/shard-server ./cmd/shard-server \
     && CGO_ENABLED=0 go build -o /out/reshard ./cmd/reshard
 
-FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS sharded-runtime
+FROM debian:bookworm-slim AS sharded-runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -51,7 +51,7 @@ COPY --from=sharded-build /out/reshard /usr/local/bin/reshard
 ENTRYPOINT ["reshard"]
 
 # This controller uses only the Go standard library; no module downloads needed.
-FROM golang:1.26@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS healing-build
+FROM golang:1.26 AS healing-build
 WORKDIR /src
 COPY go.mod ./
 COPY internal/healing/ ./internal/healing/
