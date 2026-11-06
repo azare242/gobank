@@ -1,5 +1,6 @@
 x-shard: &shard
-  image: gobank-shard:${VERSION:-assignment2}
+  image: ${SHARD_IMAGE:-gobank-shard:${VERSION:-assignment2}}
+  pull_policy: ${IMAGE_PULL_POLICY:-missing}
   build:
     context: ../..
     target: shard
@@ -11,7 +12,8 @@ x-shard-env: &shard-env
   INTERNAL_TOKEN: ${INTERNAL_TOKEN:?set INTERNAL_TOKEN}
   SEED_FIXTURES: "true"
 x-db: &db
-  image: postgres:17-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+  image: ${POSTGRES_IMAGE:-postgres:17-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27}
+  pull_policy: ${IMAGE_PULL_POLICY:-missing}
   command: [postgres, -c, max_prepared_transactions=100, -c, max_connections=150]
   environment:
     POSTGRES_USER: bank
@@ -70,7 +72,8 @@ services:
     depends_on:
       db-b: {condition: service_healthy}
   gateway:
-    image: gobank-gateway:${VERSION:-assignment2}
+    image: ${GATEWAY_IMAGE:-gobank-gateway:${VERSION:-assignment2}}
+    pull_policy: ${IMAGE_PULL_POLICY:-missing}
     build:
       context: ../..
       target: gateway

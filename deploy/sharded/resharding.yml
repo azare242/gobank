@@ -2,7 +2,8 @@
 x-routing: &routing
   ROUTING_DSN: postgres://bank:${POSTGRES_PASSWORD}@db-coordinator:5432/bank?sslmode=disable
 x-c: &c
-  image: gobank-shard:${VERSION:-assignment2}
+  image: ${SHARD_IMAGE:-gobank-shard:${VERSION:-assignment2}}
+  pull_policy: ${IMAGE_PULL_POLICY:-missing}
   profiles: [reshard]
   volumes: [./resharding-shards.json:/app/shards.json:ro]
   networks: [bank]
@@ -41,7 +42,8 @@ services:
       db-coordinator: {condition: service_healthy}
   db-c:
     profiles: [reshard]
-    image: postgres:17-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+    image: ${POSTGRES_IMAGE:-postgres:17-bookworm@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27}
+    pull_policy: ${IMAGE_PULL_POLICY:-missing}
     command: [postgres, -c, max_prepared_transactions=100, -c, max_connections=150]
     environment:
       POSTGRES_USER: bank
@@ -66,7 +68,8 @@ services:
       REPLICA_ID: c2
   reshard:
     profiles: [reshard]
-    image: gobank-reshard:${VERSION:-assignment2}
+    image: ${RESHARD_IMAGE:-gobank-reshard:${VERSION:-assignment2}}
+    pull_policy: ${IMAGE_PULL_POLICY:-missing}
     build:
       context: ../..
       target: reshard
