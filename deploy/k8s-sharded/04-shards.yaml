@@ -1,0 +1,378 @@
+# Four shard Pods: two replicas for shard A (a1, a2) and two for shard B (b1, b2).
+# Each Pod gets its own Service, because the gateway shard map lists explicit URLs.
+# The shard Pods are stateless: all balances live in the shard databases.
+#
+# $(POSTGRES_PASSWORD) is filled in by Kubernetes from the env var defined just
+# above it in the same container.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shard-a1
+  namespace: gobank
+  labels:
+    app: shard-a1
+    shard: a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shard-a1
+  template:
+    metadata:
+      labels:
+        app: shard-a1
+        shard: a
+    spec:
+      containers:
+        - name: shard
+          image: gobank-shard:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DB_DSN
+              value: postgres://bank:$(POSTGRES_PASSWORD)@db-a:5432/bank?sslmode=disable
+            - name: SHARD_MAP
+              value: /app/shards.json
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: INTERNAL_TOKEN
+            - name: SHARD_ID
+              value: a
+            - name: REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SEED_FIXTURES
+              value: "true"
+          volumeMounts:
+            - name: shard-map
+              mountPath: /app/shards.json
+              subPath: shards.json
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: shard-map
+          configMap:
+            name: gobank-shardmap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shard-a1
+  namespace: gobank
+spec:
+  selector:
+    app: shard-a1
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shard-a2
+  namespace: gobank
+  labels:
+    app: shard-a2
+    shard: a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shard-a2
+  template:
+    metadata:
+      labels:
+        app: shard-a2
+        shard: a
+    spec:
+      containers:
+        - name: shard
+          image: gobank-shard:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DB_DSN
+              value: postgres://bank:$(POSTGRES_PASSWORD)@db-a:5432/bank?sslmode=disable
+            - name: SHARD_MAP
+              value: /app/shards.json
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: INTERNAL_TOKEN
+            - name: SHARD_ID
+              value: a
+            - name: REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SEED_FIXTURES
+              value: "true"
+          volumeMounts:
+            - name: shard-map
+              mountPath: /app/shards.json
+              subPath: shards.json
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: shard-map
+          configMap:
+            name: gobank-shardmap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shard-a2
+  namespace: gobank
+spec:
+  selector:
+    app: shard-a2
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shard-b1
+  namespace: gobank
+  labels:
+    app: shard-b1
+    shard: b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shard-b1
+  template:
+    metadata:
+      labels:
+        app: shard-b1
+        shard: b
+    spec:
+      containers:
+        - name: shard
+          image: gobank-shard:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DB_DSN
+              value: postgres://bank:$(POSTGRES_PASSWORD)@db-b:5432/bank?sslmode=disable
+            - name: SHARD_MAP
+              value: /app/shards.json
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: INTERNAL_TOKEN
+            - name: SHARD_ID
+              value: b
+            - name: REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SEED_FIXTURES
+              value: "true"
+          volumeMounts:
+            - name: shard-map
+              mountPath: /app/shards.json
+              subPath: shards.json
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: shard-map
+          configMap:
+            name: gobank-shardmap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shard-b1
+  namespace: gobank
+spec:
+  selector:
+    app: shard-b1
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shard-b2
+  namespace: gobank
+  labels:
+    app: shard-b2
+    shard: b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shard-b2
+  template:
+    metadata:
+      labels:
+        app: shard-b2
+        shard: b
+    spec:
+      containers:
+        - name: shard
+          image: gobank-shard:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DB_DSN
+              value: postgres://bank:$(POSTGRES_PASSWORD)@db-b:5432/bank?sslmode=disable
+            - name: SHARD_MAP
+              value: /app/shards.json
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: INTERNAL_TOKEN
+            - name: SHARD_ID
+              value: b
+            - name: REPLICA_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SEED_FIXTURES
+              value: "true"
+          volumeMounts:
+            - name: shard-map
+              mountPath: /app/shards.json
+              subPath: shards.json
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: shard-map
+          configMap:
+            name: gobank-shardmap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shard-b2
+  namespace: gobank
+spec:
+  selector:
+    app: shard-b2
+  ports:
+    - port: 3000
+      targetPort: 3000

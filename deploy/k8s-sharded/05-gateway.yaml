@@ -1,0 +1,102 @@
+# Public API + coordinator. The gateway routes each account to its shard.
+# It is stateless, so we can run two copies.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: gobank
+  labels:
+    app: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: gobank-gateway:assignment2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: POSTGRES_PASSWORD
+            - name: COORDINATOR_DSN
+              value: postgres://bank:$(POSTGRES_PASSWORD)@db-coordinator:5432/bank?sslmode=disable
+            - name: SHARD_MAP
+              value: /app/shards.json
+            - name: INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: INTERNAL_TOKEN
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: JWT_SECRET
+            - name: JWT_ISSUER
+              value: gobank
+            - name: JWT_AUDIENCE
+              value: gobank-client
+            - name: FIXTURE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: FIXTURE_PASSWORD
+          volumeMounts:
+            - name: shard-map
+              mountPath: /app/shards.json
+              subPath: shards.json
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: shard-map
+          configMap:
+            name: gobank-shardmap
+---
+# NodePort is the easiest way to reach the API from outside Minikube:
+#   curl http://$(minikube ip):30080/health
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: gobank
+spec:
+  type: NodePort
+  selector:
+    app: gateway
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30080

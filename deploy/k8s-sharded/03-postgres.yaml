@@ -1,0 +1,279 @@
+# One simple PostgreSQL server per database.
+# The shard databases each have their own PVC so data survives Pod restarts.
+# max_prepared_transactions is required because the shards use two-phase commit.
+#
+# This is deliberately simple: one Postgres Pod per database, no replication.
+# That is enough to learn the Kubernetes deployment, but it is NOT highly available.
+
+###############################################################################
+# Shard A database
+###############################################################################
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-a-data
+  namespace: gobank
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-a
+  namespace: gobank
+spec:
+  replicas: 1
+  # A Postgres data volume can only be used by one Pod at a time.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: db-a
+  template:
+    metadata:
+      labels:
+        app: db-a
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          args:
+            - -c
+            - max_prepared_transactions=100
+            - -c
+            - max_connections=150
+          env:
+            - name: POSTGRES_USER
+              value: bank
+            - name: POSTGRES_DB
+              value: bank
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bank", "-d", "bank"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bank", "-d", "bank"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: db-a-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-a
+  namespace: gobank
+spec:
+  selector:
+    app: db-a
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+###############################################################################
+# Shard B database
+###############################################################################
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-b-data
+  namespace: gobank
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-b
+  namespace: gobank
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: db-b
+  template:
+    metadata:
+      labels:
+        app: db-b
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          args:
+            - -c
+            - max_prepared_transactions=100
+            - -c
+            - max_connections=150
+          env:
+            - name: POSTGRES_USER
+              value: bank
+            - name: POSTGRES_DB
+              value: bank
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bank", "-d", "bank"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bank", "-d", "bank"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: db-b-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-b
+  namespace: gobank
+spec:
+  selector:
+    app: db-b
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+###############################################################################
+# Coordinator database (stores cross-shard transaction decisions)
+###############################################################################
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-coordinator-data
+  namespace: gobank
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-coordinator
+  namespace: gobank
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: db-coordinator
+  template:
+    metadata:
+      labels:
+        app: db-coordinator
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          args:
+            - -c
+            - max_prepared_transactions=100
+            - -c
+            - max_connections=150
+          env:
+            - name: POSTGRES_USER
+              value: bank
+            - name: POSTGRES_DB
+              value: bank
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bank", "-d", "bank"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "bank", "-d", "bank"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: db-coordinator-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-coordinator
+  namespace: gobank
+spec:
+  selector:
+    app: db-coordinator
+  ports:
+    - port: 5432
+      targetPort: 5432
