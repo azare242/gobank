@@ -1,0 +1,13 @@
+# The standalone server uses SQLite by default.
+# This volume keeps users.db when the Pod is deleted or restarted.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gobank-standalone-data
+  namespace: gobank-standalone
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

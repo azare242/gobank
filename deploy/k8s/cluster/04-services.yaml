@@ -1,0 +1,106 @@
+# Every node gets a headless Service so the Raft peer list can use stable DNS
+# names instead of Pod IPs. publishNotReadyAddresses keeps the DNS record
+# available while a node is still starting, which is required because the node
+# resolves its own name before it can become ready.
+#
+# Each node also gets a NodePort Service so you can reach node A, B or C
+# directly from outside Minikube (30082, 30083, 30084).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gobank-node-a
+  namespace: gobank-cluster
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: cluster-a
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+    - name: raft
+      port: 7000
+      targetPort: 7000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gobank-node-b
+  namespace: gobank-cluster
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: cluster-b
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+    - name: raft
+      port: 7000
+      targetPort: 7000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gobank-node-c
+  namespace: gobank-cluster
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: cluster-c
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+    - name: raft
+      port: 7000
+      targetPort: 7000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-a-api
+  namespace: gobank-cluster
+spec:
+  type: NodePort
+  selector:
+    app: cluster-a
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30082
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-b-api
+  namespace: gobank-cluster
+spec:
+  type: NodePort
+  selector:
+    app: cluster-b
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30083
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-c-api
+  namespace: gobank-cluster
+spec:
+  type: NodePort
+  selector:
+    app: cluster-c
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30084

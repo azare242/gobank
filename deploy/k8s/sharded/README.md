@@ -69,7 +69,7 @@ Replace them before using this anywhere other than a local Minikube cluster:
 ## 3. Deploy
 
 ```bash
-kubectl apply -f deploy/k8s
+kubectl apply -f deploy/k8s/sharded
 ```
 
 The files are numbered so the namespace is created first. The shard Pods may

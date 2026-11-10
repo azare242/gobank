@@ -1,0 +1,6 @@
+# Standalone gobank usually gets its own namespace so it can run next to the
+# sharded and cluster deployments without Service name clashes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gobank-standalone

@@ -1,0 +1,94 @@
+# The original single-server API from cmd/server.
+# It stores users and accounts in SQLite at /app/data/users.db.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gobank-standalone
+  namespace: gobank-standalone
+  labels:
+    app: gobank-standalone
+spec:
+  # SQLite is a single file and the volume is ReadWriteOnce, so exactly one Pod.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gobank-standalone
+  template:
+    metadata:
+      labels:
+        app: gobank-standalone
+    spec:
+      initContainers:
+        # The container runs as UID 10001, but a new volume is owned by root.
+        # This one-time job makes the volume writable by the server.
+        - name: fix-data-permissions
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "chown -R 10001:10001 /app/data"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+      containers:
+        - name: server
+          image: gobank:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: LISTEN_ADDR
+              value: 0.0.0.0:3000
+            - name: DB_DRIVER
+              value: sqlite
+            - name: DB_PATH
+              value: /app/data/users.db
+            - name: MAX_CONCURRENT_REQUESTS
+              value: "100"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-standalone-secrets
+                  key: JWT_SECRET
+            - name: JWT_ISSUER
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-standalone-secrets
+                  key: JWT_ISSUER
+            - name: JWT_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-standalone-secrets
+                  key: JWT_AUDIENCE
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: gobank-standalone-data

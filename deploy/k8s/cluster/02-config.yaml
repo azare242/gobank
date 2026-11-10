@@ -1,0 +1,59 @@
+# One config file per Raft node.
+#
+# The Raft address is the node's headless Service DNS name. Kubernetes resolves
+# that name to the Pod IP, which is a local address the node can bind to.
+# The peer list is identical on all three nodes, exactly like deploy/cluster/*.json.
+#
+# Only node A has "bootstrap": true. It initialises Raft membership on its first
+# start; B and C join the cluster after A elects itself.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gobank-cluster-config
+  namespace: gobank-cluster
+data:
+  a.json: |
+    {
+      "id": "a",
+      "http": "0.0.0.0:3000",
+      "raft": "gobank-node-a:7000",
+      "data_dir": "/app/data",
+      "bootstrap": true,
+      "max_concurrent_requests": 100,
+      "enable_demo_faults": true,
+      "peers": [
+        {"id": "a", "raft": "gobank-node-a:7000", "http": "http://gobank-node-a:3000"},
+        {"id": "b", "raft": "gobank-node-b:7000", "http": "http://gobank-node-b:3000"},
+        {"id": "c", "raft": "gobank-node-c:7000", "http": "http://gobank-node-c:3000"}
+      ]
+    }
+  b.json: |
+    {
+      "id": "b",
+      "http": "0.0.0.0:3000",
+      "raft": "gobank-node-b:7000",
+      "data_dir": "/app/data",
+      "bootstrap": false,
+      "max_concurrent_requests": 100,
+      "enable_demo_faults": true,
+      "peers": [
+        {"id": "a", "raft": "gobank-node-a:7000", "http": "http://gobank-node-a:3000"},
+        {"id": "b", "raft": "gobank-node-b:7000", "http": "http://gobank-node-b:3000"},
+        {"id": "c", "raft": "gobank-node-c:7000", "http": "http://gobank-node-c:3000"}
+      ]
+    }
+  c.json: |
+    {
+      "id": "c",
+      "http": "0.0.0.0:3000",
+      "raft": "gobank-node-c:7000",
+      "data_dir": "/app/data",
+      "bootstrap": false,
+      "max_concurrent_requests": 100,
+      "enable_demo_faults": true,
+      "peers": [
+        {"id": "a", "raft": "gobank-node-a:7000", "http": "http://gobank-node-a:3000"},
+        {"id": "b", "raft": "gobank-node-b:7000", "http": "http://gobank-node-b:3000"},
+        {"id": "c", "raft": "gobank-node-c:7000", "http": "http://gobank-node-c:3000"}
+      ]
+    }

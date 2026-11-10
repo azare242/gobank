@@ -1,0 +1,6 @@
+# The three-node Raft cluster gets its own namespace so it can run next to the
+# standalone and sharded deployments without name clashes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gobank-cluster
