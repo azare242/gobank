@@ -1,5 +1,7 @@
 # Mini Banking API
 
+Application support for the Kubernetes assignment is documented in [Go service settings](docs/kubernetes-go.md) and [container images](docs/kubernetes-images.md). The [Minikube runbook](docs/kubernetes-runbook.md) covers the Assignment 3 manifests and deployment commands.
+
 ## Sharded deployment
 
 This guide runs the Gateway/Coordinator, four application replicas, and three PostgreSQL databases on one Docker host. All commands below run in **Bash from the repository root**. Standalone and Raft instructions follow later in this README.
