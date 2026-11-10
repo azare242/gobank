@@ -23,20 +23,27 @@ USER bank
 EXPOSE 3000 7000
 CMD ["server"]
 
-# Assignment 2 targets use the shared source/build cache, with one role per image.
+# Sharded targets share the build cache, including the client built above.
 FROM build AS sharded-build
 RUN CGO_ENABLED=0 go build -o /out/gateway ./cmd/gateway \
     && CGO_ENABLED=0 go build -o /out/shard-server ./cmd/shard-server \
     && CGO_ENABLED=0 go build -o /out/reshard ./cmd/reshard
 
 FROM debian:bookworm-slim AS sharded-runtime
+ARG VERSION=dev
+ARG COMMIT=unknown
+LABEL org.opencontainers.image.source="https://github.com/azare242/gobank" \
+    org.opencontainers.image.revision="${COMMIT}" \
+    org.opencontainers.image.version="${VERSION}"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 USER 10001:10001
-ENV LISTEN_ADDR=0.0.0.0:3000
-EXPOSE 3000
+ENV LISTEN_ADDR=0.0.0.0:3000 \
+    VERSION=${VERSION} \
+    COMMIT=${COMMIT}
+EXPOSE 3000 9090
 
 FROM sharded-runtime AS gateway
 COPY --from=sharded-build /out/gateway /usr/local/bin/gateway
@@ -45,6 +52,10 @@ ENTRYPOINT ["gateway"]
 FROM sharded-runtime AS shard
 COPY --from=sharded-build /out/shard-server /usr/local/bin/shard-server
 ENTRYPOINT ["shard-server"]
+
+FROM sharded-runtime AS client
+COPY --from=sharded-build /out/client /usr/local/bin/client
+ENTRYPOINT ["client"]
 
 FROM sharded-runtime AS reshard
 COPY --from=sharded-build /out/reshard /usr/local/bin/reshard
