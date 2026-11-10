@@ -15,3 +15,12 @@ __pycache__/
 
 # Local LaTeX report sources and generated artifacts
 /report/
+
+# Assignment 3 generated credentials and local experiment output
+/deploy/k8s/secrets/*
+!/deploy/k8s/secrets/README.md
+/scripts/k8s/evidence/
+
+# Track database manifests despite the generic data/ rule above.
+!/deploy/k8s/data/
+!/deploy/k8s/data/*.yaml

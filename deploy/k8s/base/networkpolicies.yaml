@@ -1,0 +1,332 @@
+# Policies are additive. Both ends must allow a connection.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: loadgen
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: shard
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: coordinator-db
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shard-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: shard
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shard-a-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: shard-a
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: shard-a-db
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shard-b-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: shard-b
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: shard-b-db
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: loadgen-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: loadgen
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-metrics
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: gobank
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [gateway, shard]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gobank-monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shard-a-db-ingress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: shard-a-db
+  policyTypes: [Ingress]
+  ingress:
+    # Only the owning application can connect as a banking client.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: shard-a
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Replication and instance-manager communication within this DB cluster.
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: shard-a-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gobank-monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shard-b-db-ingress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: shard-b-db
+  policyTypes: [Ingress]
+  ingress:
+    # Only the owning application can connect as a banking client.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: shard-b
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Replication and instance-manager communication within this DB cluster.
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: shard-b-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gobank-monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: coordinator-db-ingress
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: coordinator-db
+  policyTypes: [Ingress]
+  ingress:
+    # Only the owning application can connect as a banking client.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Replication and instance-manager communication within this DB cluster.
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: coordinator-db
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gobank-monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: In
+        values: [shard-a-db, shard-b-db, coordinator-db]
+  policyTypes: [Egress]
+  # CNPG instance managers need the Kubernetes API for failover and certificates.
+  # Banking app egress stays restricted by the other policies.
+  egress:
+    - {}

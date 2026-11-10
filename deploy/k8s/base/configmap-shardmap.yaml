@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gobank-shardmap
+data:
+  shards.json: |
+    {
+      "shards": [
+        {
+          "id": "a",
+          "first": 1,
+          "last": 1000,
+          "discovery": "dns",
+          "replicas": [
+            "http://shard-a-headless.gobank.svc.cluster.local:3000"
+          ]
+        },
+        {
+          "id": "b",
+          "first": 1001,
+          "last": 2000,
+          "discovery": "dns",
+          "replicas": [
+            "http://shard-b-headless.gobank.svc.cluster.local:3000"
+          ]
+        }
+      ]
+    }

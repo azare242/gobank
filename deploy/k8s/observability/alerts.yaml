@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: gobank-monitoring
+  name: prometheus-alerts
+data:
+  gobank.yml: |
+    groups:
+      - name: gobank
+        rules:
+          - alert: GobankGatewayNotReady
+            expr: max(gobank_ready{service="gateway"}) == 0
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: No Gateway is ready
+          - alert: GobankMetricsTargetDown
+            expr: up{job=~"gobank|cnpg"} == 0
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: A banking metrics target cannot be scraped
+          - alert: GobankShardUnavailable
+            expr: sum by (shard) (gobank_shard_replica_healthy) == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: A shard has no healthy application replica
+          - alert: GobankDatabaseUnavailable
+            expr: gobank_db_up == 0 or gobank_coordinator_db_up == 0
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: An application cannot reach its database
+          - alert: GobankPendingTransactionOld
+            expr: gobank_transaction_oldest_pending_seconds > 60
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: A pending transaction has made no durable progress for over a minute
+          - alert: GobankPreparedTransactionsStuck
+            expr: gobank_prepared_transactions > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: Prepared transactions have remained present for five minutes
+          - alert: GobankHighErrorRate
+            expr: sum by (service) (rate(gobank_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum by (service) (rate(gobank_http_requests_total[5m])), 0.001) > 0.05
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: More than five percent of requests return server errors

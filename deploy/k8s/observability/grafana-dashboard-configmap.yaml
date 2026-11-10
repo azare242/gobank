@@ -1,0 +1,328 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: gobank-monitoring
+  name: grafana-dashboard
+data:
+  gobank.json: |
+    {
+      "uid": "gobank",
+      "title": "GoBank Assignment 3",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "15s",
+      "time": {
+        "from": "now-30m",
+        "to": "now"
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Ready services",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "gobank_ready",
+              "legendFormat": "{{service}} {{shard}} {{pod}} {{status}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "HTTP requests / second",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (service, status) (rate(gobank_http_requests_total[1m]))",
+              "legendFormat": "{{service}} {{shard}} {{pod}} {{status}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "95th percentile HTTP latency",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (service, le) (rate(gobank_http_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{service}} {{shard}} {{pod}} {{status}}"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Database connectivity",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "gobank_db_up or gobank_coordinator_db_up",
+              "legendFormat": "{{service}} {{shard}} {{pod}} {{status}}"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Healthy shard targets",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (shard, pod) (gobank_shard_replica_healthy)",
+              "legendFormat": "{{service}} {{shard}} {{pod}} {{status}}"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Pending coordinator transactions",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "gobank_transactions_pending",
+              "legendFormat": "{{service}} {{shard}} {{pod}} {{status}}"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "title": "Oldest pending transaction without progress",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "gobank_transaction_oldest_pending_seconds",
+              "legendFormat": "{{service}} {{shard}} {{pod}} {{status}}"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "title": "Prepared transactions per shard database",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (shard) (gobank_prepared_transactions)",
+              "legendFormat": "{{service}} {{shard}} {{pod}} {{status}}"
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "title": "PostgreSQL replica lag",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 32,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_pg_replication_lag",
+              "legendFormat": "{{cluster}} {{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 10,
+          "title": "PostgreSQL connections",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 32,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (cluster, pod) (cnpg_backends_total)",
+              "legendFormat": "{{cluster}} {{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "title": "Streaming standbys per primary",
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 40,
+            "w": 12,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_pg_replication_streaming_replicas",
+              "legendFormat": "{{cluster}} {{pod}}"
+            }
+          ]
+        }
+      ]
+    }

@@ -1,0 +1,40 @@
+# CloudNativePG creates the primary, standbys, Services and PVCs.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: coordinator-db
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.7-standard-bookworm
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 2Gi
+    storageClass: standard
+  # Minikube has one node, so required anti-affinity would leave pods Pending.
+  affinity:
+    enablePodAntiAffinity: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  postgresql:
+    parameters:
+      max_connections: "200"
+      max_prepared_transactions: "200"
+      synchronous_commit: "on"
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+  bootstrap:
+    initdb:
+      database: bank
+      owner: bank
+      secret:
+        name: coordinator-db-credentials
+  # The optional plain Prometheus deployment scrapes port 9187 directly.
+  monitoring:
+    enablePodMonitor: false
