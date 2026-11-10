@@ -25,6 +25,13 @@ spec:
       max_connections: "200"
       max_prepared_transactions: "200"
       synchronous_commit: "on"
+      # Detect vanished Pod connections so session locks cannot stall recovery.
+      tcp_keepalives_idle: "15"
+      tcp_keepalives_interval: "5"
+      tcp_keepalives_count: "3"
+      tcp_user_timeout: "15000"
+      idle_session_timeout: "60s"
+      idle_in_transaction_session_timeout: "30s"
     synchronous:
       method: any
       number: 1
