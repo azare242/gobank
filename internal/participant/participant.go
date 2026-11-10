@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
 
@@ -101,6 +102,11 @@ func (p *Participant) state(ctx context.Context, conn *sql.Conn, id string) (str
 	var state string
 	e := conn.QueryRowContext(ctx, `SELECT state FROM bank_participants WHERE id=$1`, id).Scan(&state)
 	if errors.Is(e, sql.ErrNoRows) {
+		var orphan bool
+		if err := conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_prepared_xacts WHERE gid=$1 AND database=current_database())`, p.gid(id)).Scan(&orphan); err != nil {
+			return "", err
+		}
+		slog.Warn("unknown participant transaction", "transaction_id", id, "shard", p.ShardID, "orphan_prepared", orphan)
 		return "UNKNOWN", nil
 	}
 	if e != nil {
@@ -158,6 +164,7 @@ func (p *Participant) Prepare(ctx context.Context, cmd Command) (Status, error) 
 		if e != nil {
 			return e
 		}
+		slog.Info("participant prepare state", "transaction_id", cmd.ID, "shard", p.ShardID, "state", state)
 		result.State = state
 		if state == "COMMIT" || state == "PREPARED" {
 			return nil
@@ -217,6 +224,7 @@ func (p *Participant) Prepare(ctx context.Context, cmd Command) (Status, error) 
 		if p.Crash != nil {
 			p.Crash("after_prepare")
 		}
+		slog.Info("participant prepared", "transaction_id", cmd.ID, "shard", p.ShardID, "state", "PREPARED")
 		result.State = "PREPARED"
 		return nil
 	})
@@ -265,6 +273,9 @@ func (p *Participant) Decide(ctx context.Context, cmd Command, decision string) 
 		_, e = c.ExecContext(ctx, `UPDATE bank_participants SET state=$1 WHERE id=$2`, decision, cmd.ID)
 		if e == nil && p.Crash != nil {
 			p.Crash("after_finalize")
+		}
+		if e == nil {
+			slog.Info("participant decision applied", "transaction_id", cmd.ID, "shard", p.ShardID, "decision", decision)
 		}
 		result.State = decision
 		return e

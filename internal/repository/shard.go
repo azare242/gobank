@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/azare242/gobank/internal/serviceerr"
+	"github.com/azare242/gobank/internal/settings"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // SQLStore is the PostgreSQL-only Assignment 2 repository. Legacy stores are unchanged.
@@ -45,12 +47,18 @@ func OpenSQL(ctx context.Context, dsn string) (*SQLStore, error) {
 	if strings.TrimSpace(dsn) == "" {
 		return nil, fmt.Errorf("PostgreSQL DSN is required")
 	}
-	db, e := sql.Open("pgx", dsn)
+	config, e := pgx.ParseConfig(dsn)
 	if e != nil {
-		return nil, e
+		return nil, fmt.Errorf("invalid PostgreSQL DSN")
 	}
-	db.SetMaxOpenConns(30)
-	db.SetMaxIdleConns(5)
+	if config.ConnectTimeout == 0 {
+		config.ConnectTimeout = 5 * time.Second
+	}
+	db := stdlib.OpenDB(*config)
+	db.SetMaxOpenConns(max(1, settings.Int("DB_MAX_OPEN_CONNS", 30)))
+	db.SetMaxIdleConns(settings.Int("DB_MAX_IDLE_CONNS", 5))
+	db.SetConnMaxLifetime(settings.Duration("DB_CONN_MAX_LIFETIME", 5*time.Minute))
+	db.SetConnMaxIdleTime(settings.Duration("DB_CONN_MAX_IDLE_TIME", time.Minute))
 	if e = db.PingContext(ctx); e != nil {
 		db.Close()
 		return nil, e

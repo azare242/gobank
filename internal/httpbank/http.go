@@ -6,6 +6,8 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/azare242/gobank/internal/observability"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,6 +25,16 @@ func RequestID(ctx context.Context) string { id, _ := ctx.Value(requestIDKey{}).
 func JSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	if tracked, ok := w.(*response); ok {
+		b, _ := json.Marshal(v)
+		var fields struct {
+			Error    string `json:"error"`
+			Pending  bool   `json:"pending"`
+			Decision string `json:"decision"`
+		}
+		_ = json.Unmarshal(b, &fields)
+		tracked.errorCode, tracked.pending, tracked.decision = fields.Error, fields.Pending, fields.Decision
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -79,8 +91,54 @@ func Log(shard, replica string, next http.Handler) http.Handler {
 		if tx := r.Header.Get("X-Transaction-ID"); tx != "" {
 			w.Header().Set("X-Transaction-ID", tx)
 		}
+		service := "gateway"
+		if shard != "" {
+			service = "shard"
+		}
+		base := observability.Labels("service", service, "shard", shard, "replica", replica)
+		observability.Add("gobank_http_in_flight_requests", base, 1)
+		defer observability.Add("gobank_http_in_flight_requests", base, -1)
+		tracked := &response{ResponseWriter: w, status: 200}
 		start := time.Now()
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id)))
-		slog.Info("request", "shard_id", shard, "replica_id", replica, "request_id", id, "operation_id", r.Header.Get("Idempotency-Key"), "transaction_id", w.Header().Get("X-Transaction-ID"), "path", r.URL.Path, "duration", time.Since(start))
+		r = r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id))
+		next.ServeHTTP(tracked, r)
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		}
+		method := r.Method
+		switch method {
+		case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE":
+		default:
+			method = "OTHER"
+		}
+		labels := observability.Labels("service", service, "shard", shard, "replica", replica, "method", method, "route", route)
+		observability.Add("gobank_http_requests_total", strings.TrimSuffix(labels, "}")+fmt.Sprintf(",status=%q}", fmt.Sprint(tracked.status)), 1)
+		observability.Duration(labels, time.Since(start))
+		slog.Info("request", "shard_id", shard, "replica_id", replica, "request_id", id, "operation_id", r.Header.Get("Idempotency-Key"), "transaction_id", w.Header().Get("X-Transaction-ID"), "route", route, "status", tracked.status, "error_code", tracked.errorCode, "pending", tracked.pending, "decision", tracked.decision, "duration_ms", float64(time.Since(start).Microseconds())/1000)
 	})
 }
+
+type response struct {
+	http.ResponseWriter
+	status    int
+	wrote     bool
+	errorCode string
+	pending   bool
+	decision  string
+}
+
+func (w *response) WriteHeader(code int) {
+	if !w.wrote {
+		w.status = code
+		w.wrote = true
+		w.ResponseWriter.WriteHeader(code)
+	}
+}
+func (w *response) Write(data []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(200)
+	}
+	return w.ResponseWriter.Write(data)
+}
+func (w *response) Unwrap() http.ResponseWriter { return w.ResponseWriter }

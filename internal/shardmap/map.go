@@ -13,10 +13,11 @@ import (
 )
 
 type Shard struct {
-	ID       string   `json:"id"`
-	First    int      `json:"first"`
-	Last     int      `json:"last"`
-	Replicas []string `json:"replicas"`
+	Discovery string   `json:"discovery,omitempty"`
+	ID        string   `json:"id"`
+	First     int      `json:"first"`
+	Last      int      `json:"last"`
+	Replicas  []string `json:"replicas"`
 }
 type Map struct {
 	Shards []Shard `json:"shards"`
@@ -57,7 +58,13 @@ func (m *Map) Validate() error {
 	ids := map[string]bool{}
 	urls := map[string]bool{}
 	for _, s := range m.Shards {
-		if s.ID == "" || ids[s.ID] || (s.First < 1 && (s.First != 0 || s.Last != 0)) || s.Last > 2000 || s.First > s.Last || len(s.Replicas) < 2 {
+		minimum := 2
+		if s.Discovery == "dns" {
+			minimum = 1
+		} else if s.Discovery != "" {
+			return fmt.Errorf("unknown discovery mode %q", s.Discovery)
+		}
+		if s.ID == "" || ids[s.ID] || (s.First < 1 && (s.First != 0 || s.Last != 0)) || s.Last > 2000 || s.First > s.Last || len(s.Replicas) < minimum {
 			return fmt.Errorf("invalid shard configuration: %s", s.ID)
 		}
 		ids[s.ID] = true

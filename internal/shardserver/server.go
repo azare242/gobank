@@ -11,6 +11,7 @@ import (
 	"github.com/azare242/gobank/internal/repository"
 	"github.com/azare242/gobank/internal/service"
 	"github.com/azare242/gobank/internal/serviceerr"
+	"github.com/azare242/gobank/internal/settings"
 	"github.com/azare242/gobank/internal/shardmap"
 )
 
@@ -37,7 +38,7 @@ func (s *Server) Handler() http.Handler {
 		httpbank.JSON(w, 200, map[string]string{"status": "alive"})
 	})
 	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), settings.Duration("READINESS_TIMEOUT", time.Second))
 		defer cancel()
 		if e := s.Participant.Ready(ctx); e != nil {
 			httpbank.Error(w, e)

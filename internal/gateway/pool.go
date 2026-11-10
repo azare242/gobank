@@ -7,39 +7,50 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/azare242/gobank/internal/httpbank"
+	"github.com/azare242/gobank/internal/observability"
 	"github.com/azare242/gobank/internal/serviceerr"
+	"github.com/azare242/gobank/internal/settings"
 	"github.com/azare242/gobank/internal/shardmap"
 )
 
 type Pool struct {
-	Map     *shardmap.Map
-	Secret  string
-	HTTP    *http.Client
-	mu      sync.Mutex
-	healthy map[string]bool
-	next    map[string]int
+	Resolver Resolver
+	resolved map[string][]string
+	probeMu  sync.Mutex
+	Map      *shardmap.Map
+	Secret   string
+	HTTP     *http.Client
+	mu       sync.Mutex
+	healthy  map[string]bool
+	next     map[string]int
 }
 
 func NewPool(m *shardmap.Map, secret string) *Pool {
-	return &Pool{Map: m, Secret: secret, HTTP: &http.Client{Timeout: 6 * time.Second}, healthy: map[string]bool{}, next: map[string]int{}}
+	return &Pool{Resolver: net.DefaultResolver, resolved: map[string][]string{}, Map: m, Secret: secret, HTTP: &http.Client{Timeout: settings.Duration("SHARD_HTTP_TIMEOUT", 6*time.Second)}, healthy: map[string]bool{}, next: map[string]int{}}
 }
 func (p *Pool) Probe(ctx context.Context) {
+	p.probeMu.Lock()
+	defer p.probeMu.Unlock()
 	var wg sync.WaitGroup
 	shards, _, e := p.Map.Current()
 	if e != nil {
 		return
 	}
-	for _, s := range shards {
-		for _, base := range s.Replicas {
+	discovery, cancel := context.WithTimeout(ctx, settings.Duration("READINESS_TIMEOUT", time.Second))
+	targets := p.refresh(discovery, shards)
+	cancel()
+	for shard, bases := range targets {
+		for _, base := range bases {
 			wg.Add(1)
 			go func(base string) {
 				defer wg.Done()
-				c, cancel := context.WithTimeout(ctx, time.Second)
+				c, cancel := context.WithTimeout(ctx, settings.Duration("READINESS_TIMEOUT", time.Second))
 				defer cancel()
 				req, _ := http.NewRequestWithContext(c, "GET", base+"/ready", nil)
 				resp, e := p.HTTP.Do(req)
@@ -49,6 +60,11 @@ func (p *Pool) Probe(ctx context.Context) {
 				}
 				p.mu.Lock()
 				p.healthy[base] = ok
+				value := 0.0
+				if ok {
+					value = 1
+				}
+				observability.Set("gobank_shard_replica_healthy", observability.Labels("shard", shard, "replica", base), value)
 				p.mu.Unlock()
 			}(base)
 		}
@@ -57,7 +73,7 @@ func (p *Pool) Probe(ctx context.Context) {
 }
 func (p *Pool) Run(ctx context.Context) {
 	p.Probe(ctx)
-	t := time.NewTicker(time.Second)
+	t := time.NewTicker(settings.Duration("DISCOVERY_REFRESH_INTERVAL", 2*time.Second))
 	defer t.Stop()
 	for {
 		select {
@@ -80,7 +96,7 @@ func (p *Pool) Ready() bool {
 			continue
 		}
 		ok := false
-		for _, u := range s.Replicas {
+		for _, u := range p.resolved[s.ID] {
 			ok = ok || p.healthy[u]
 		}
 		if !ok {
@@ -90,14 +106,14 @@ func (p *Pool) Ready() bool {
 	return true
 }
 func (p *Pool) candidates(shard string) ([]string, error) {
-	s, e := p.Map.ByID(shard)
+	_, e := p.Map.ByID(shard)
 	if e != nil {
 		return nil, e
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var healthy []string
-	for _, u := range s.Replicas {
+	for _, u := range p.resolved[shard] {
 		if p.healthy[u] {
 			healthy = append(healthy, u)
 		}
@@ -106,7 +122,7 @@ func (p *Pool) candidates(shard string) ([]string, error) {
 		return nil, serviceerr.New(503, "no_healthy_replica")
 	}
 	n := p.next[shard] % len(healthy)
-	p.next[shard]++
+	p.next[shard] = (n + 1) % len(healthy)
 	return append(healthy[n:], healthy[:n]...), nil
 }
 
@@ -152,6 +168,7 @@ func (p *Pool) Call(ctx context.Context, shard, path string, input, output any) 
 		if e != nil {
 			p.mu.Lock()
 			p.healthy[base] = false
+			observability.Set("gobank_shard_replica_healthy", observability.Labels("shard", shard, "replica", base), 0)
 			p.mu.Unlock()
 			continue
 		}
@@ -163,6 +180,7 @@ func (p *Pool) Call(ctx context.Context, shard, path string, input, output any) 
 		if resp.StatusCode >= 500 {
 			p.mu.Lock()
 			p.healthy[base] = false
+			observability.Set("gobank_shard_replica_healthy", observability.Labels("shard", shard, "replica", base), 0)
 			p.mu.Unlock()
 			continue
 		}
@@ -179,4 +197,24 @@ func (p *Pool) Call(ctx context.Context, shard, path string, input, output any) 
 		return resp.Header.Get("X-Bank-Replica"), nil
 	}
 	return "", serviceerr.New(503, "shard_unavailable")
+}
+
+// ReadyContext retries initial discovery immediately when no targets are known.
+func (p *Pool) ReadyContext(ctx context.Context) bool {
+	shards, _, err := p.Map.Current()
+	if err != nil {
+		return false
+	}
+	p.mu.Lock()
+	missing := false
+	for _, s := range shards {
+		if (s.First != 0 || s.Last != 0) && len(p.resolved[s.ID]) == 0 {
+			missing = true
+		}
+	}
+	p.mu.Unlock()
+	if missing {
+		p.Probe(ctx)
+	}
+	return p.Ready()
 }
