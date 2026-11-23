@@ -39,7 +39,6 @@ else
     umask 077
     {
       printf 'COMPOSE_PROJECT_NAME=gobank-sharded\n'
-      printf 'VERSION=sharded\n'
       printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)"
       printf 'INTERNAL_TOKEN=%s\n' "$(openssl rand -hex 32)"
       printf 'JWT_SECRET=%s\n' "$(openssl rand -base64 32)"
@@ -73,22 +72,26 @@ Source only your own trusted file. Exporting these values also supplies the expe
 | `INTERNAL_TOKEN` | At least 32 bytes; authenticates Gateway-to-shard commands |
 | `JWT_SECRET` | Standard base64 encoding of at least 32 random bytes |
 | `FIXTURE_PASSWORD` | 8–72 bytes; login password for all seeded demo identities |
-| `VERSION` | Tag shared by the two application images; `sharded` in this guide |
+| `GATEWAY_IMAGE`, `SHARD_IMAGE` | Default to locally downloaded `azare242/gobank-gateway:v2` and `azare242/gobank-shard:v2` |
+| `IMAGE_PULL_POLICY` | Defaults to `never`; use the images already in Docker |
 | `COMPOSE_PROJECT_NAME` | Stable namespace for this deployment |
 | `CRASH_AT` | Empty normally; opt-in Coordinator crash injection |
 
 Compose supplies JWT issuer/audience, replica IDs, DSNs, and the mounted shard-map path. PostgreSQL starts with `max_prepared_transactions=100` and `max_connections=150`. Schema initialization and fixture insertion happen in the shard processes; no separate SQL import is needed.
 
-### 3. Build and start
+### 3. Start with downloaded images
 
 ```bash
 compose config --quiet
-compose build gateway shard-a1
 compose up -d --no-build
 compose ps
 ```
 
-Building `shard-a1` creates the shared shard image used by all four replicas. The default Dockerfile target is the legacy server image, so use the service builds above or the explicit `gateway`/`shard` targets.
+Compose uses the downloaded `azare242/` images and local PostgreSQL image without
+pulling. The optional resharding and healing controllers default to their locally
+downloaded `v1` images. A missing image causes an error instead of a download.
+To build changed application code locally, run `compose build gateway shard-a1`
+before starting; building `shard-a1` creates the image shared by all four replicas.
 
 Wait for dependency readiness; container startup alone is not an application-readiness check:
 
@@ -177,7 +180,7 @@ for role in gateway shard; do
     --build-arg HTTPS_PROXY=http://127.0.0.1:10808 \
     --build-arg http_proxy=http://127.0.0.1:10808 \
     --build-arg https_proxy=http://127.0.0.1:10808 \
-    --target "$role" -t "gobank-$role:$VERSION" .
+    --target "$role" -t "azare242/gobank-$role:v2" .
 done
 compose up -d --no-build
 ```
@@ -1057,7 +1060,7 @@ To repeat it against a fresh isolated project with prebuilt images:
 python3 scripts/sharded/resharding_demo.py --env-file /path/to/demo.env --evidence /tmp/resharding-evidence
 ```
 
-The env file must define the documented demo secrets, the image `VERSION`, and a
+The env file must define the documented demo secrets and a
 unique `COMPOSE_PROJECT_NAME`. Optional `--override` and `--url` arguments allow
 an isolated Gateway port. The runner preserves demo containers and volumes for
 inspection and refuses a project that already has containers.
@@ -1080,7 +1083,7 @@ docker compose --env-file deploy/sharded/.env \
   up -d --build
 ```
 
-The image is `gobank-healing-controller:${VERSION:-assignment2}`; optionally set
+The image is `azare242/gobank-healing-controller:v1`; optionally set
 `HEALING_VERSION` to choose its tag independently. The dedicated Dockerfile
 `healing-controller` target builds this standard-library-only executable without
 module downloads. The existing Gateway and shard image targets are unchanged.
