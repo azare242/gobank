@@ -3,7 +3,7 @@ package shardmap
 import "testing"
 
 func TestRangesAndValidation(t *testing.T) {
-	m := Map{Shards: []Shard{{"a", 1, 1000, []string{"http://a1:3000", "http://a2:3000"}}, {"b", 1001, 2000, []string{"http://b1:3000", "http://b2:3000"}}}}
+	m := Map{Shards: []Shard{{ID: "a", First: 1, Last: 1000, Replicas: []string{"http://a1:3000", "http://a2:3000"}}, {ID: "b", First: 1001, Last: 2000, Replicas: []string{"http://b1:3000", "http://b2:3000"}}}}
 	if e := m.Validate(); e != nil {
 		t.Fatal(e)
 	}
@@ -25,5 +25,22 @@ func TestRangesAndValidation(t *testing.T) {
 	m.Shards[1].First = 1002
 	if m.Validate() == nil {
 		t.Fatal("gap accepted")
+	}
+}
+
+func TestDiscoveryValidation(t *testing.T) {
+	for _, tc := range []struct {
+		mode  string
+		count int
+		valid bool
+	}{{"", 1, false}, {"", 2, true}, {"dns", 1, true}, {"dns", 0, false}, {"other", 2, false}} {
+		m := Map{Shards: []Shard{{ID: "a", First: 1, Last: 1000, Discovery: tc.mode, Replicas: []string{"http://a1", "http://a2"}[:tc.count]}, {ID: "b", First: 1001, Last: 2000, Replicas: []string{"http://b1", "http://b2"}}}}
+		if err := m.Validate(); (err == nil) != tc.valid {
+			t.Fatalf("mode=%q count=%d: %v", tc.mode, tc.count, err)
+		}
+	}
+	m := Map{Shards: []Shard{{ID: "a", First: 1, Last: 1000, Discovery: "dns", Replicas: []string{"http://a", "http://a"}}, {ID: "b", First: 1001, Last: 2000, Replicas: []string{"http://b1", "http://b2"}}}}
+	if m.Validate() == nil {
+		t.Fatal("duplicate DNS URL accepted")
 	}
 }

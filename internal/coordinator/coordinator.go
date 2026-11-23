@@ -8,12 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/azare242/gobank/internal/httpbank"
+	"log/slog"
 	"sort"
 	"time"
 
 	"github.com/azare242/gobank/internal/participant"
 	"github.com/azare242/gobank/internal/repository"
 	"github.com/azare242/gobank/internal/serviceerr"
+	"github.com/azare242/gobank/internal/settings"
 	"github.com/azare242/gobank/internal/shardmap"
 	"github.com/google/uuid"
 )
@@ -106,6 +109,7 @@ func (c *Coordinator) save(ctx context.Context, conn *sql.Conn, r *Record) error
 		return serviceerr.New(409, "contradictory_decision")
 	}
 	r.Pending = r.Status != "COMPLETED"
+	slog.Info("transaction state persisted", "transaction_id", r.ID, "status", r.Status, "decision", r.Decision, "pending", r.Pending, "acks", r.Acks)
 	return nil
 }
 
@@ -136,6 +140,8 @@ func (c *Coordinator) lock(ctx context.Context, conn *sql.Conn, id string) (func
 	}, nil
 }
 func (c *Coordinator) Process(ctx context.Context, m repository.Mutation) (Record, error) {
+	ctx, cancel := context.WithTimeout(ctx, settings.Duration("COORDINATOR_TIMEOUT", 30*time.Second))
+	defer cancel()
 	var r Record
 	if m.UserID == 0 || m.Amount <= 0 || m.Key == "" || len(m.Key) > 200 {
 		return r, serviceerr.New(400, "invalid_request")
@@ -203,6 +209,9 @@ func (c *Coordinator) Process(ctx context.Context, m repository.Mutation) (Recor
 	if repository.Fingerprint(m) != repository.Fingerprint(r.Mutation) {
 		return r, serviceerr.New(409, "idempotency_conflict")
 	}
+	if n == 1 {
+		slog.Info("transaction created", "transaction_id", r.ID, "request_id", httpbank.RequestID(ctx))
+	}
 	e = c.advance(ctx, conn, &r, n == 1)
 	return r, e
 }
@@ -251,6 +260,7 @@ func (c *Coordinator) advance(ctx context.Context, conn *sql.Conn, r *Record, fr
 			for _, shard := range shards {
 				var s participant.Status
 				_, e := c.Transport.Call(ctx, shard, "/internal/prepare", cmd, &s)
+				slog.Info("participant prepare result", "transaction_id", r.ID, "shard", shard, "state", s.State, "success", e == nil && s.State == "PREPARED")
 				if e != nil || s.State != "PREPARED" {
 					all = false
 					break
@@ -295,6 +305,7 @@ func (c *Coordinator) advance(ctx context.Context, conn *sql.Conn, r *Record, fr
 		if e = c.save(ctx, conn, r); e != nil {
 			return e
 		}
+		slog.Info("participant acknowledged", "transaction_id", r.ID, "shard", shard, "decision", r.Decision)
 		c.hit("after_ack")
 	}
 	r.Status = "COMPLETED"
@@ -328,8 +339,10 @@ func (c *Coordinator) Recover(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		task, cancel := context.WithTimeout(ctx, 20*time.Second)
+		task, cancel := context.WithTimeout(ctx, settings.Duration("COORDINATOR_TIMEOUT", 30*time.Second))
+		slog.Info("transaction recovery started", "transaction_id", record.ID)
 		e = c.recoverOne(task, record)
+		slog.Info("transaction recovery finished", "transaction_id", record.ID, "success", e == nil)
 		cancel()
 		if e != nil && ctx.Err() != nil {
 			return ctx.Err()

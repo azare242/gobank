@@ -4,6 +4,7 @@ package runtimeconfig
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/azare242/gobank/internal/repository"
 	"github.com/azare242/gobank/internal/reshard"
+	"github.com/azare242/gobank/internal/settings"
 	"github.com/azare242/gobank/internal/shardmap"
 )
 
@@ -36,19 +38,29 @@ func Context() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 func Serve(ctx context.Context, handler http.Handler) error {
-	server := &http.Server{Addr: Env("LISTEN_ADDR", ":3000"), Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: Env("LISTEN_ADDR", ":3000"), Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: settings.Duration("HTTP_READ_TIMEOUT", 10*time.Second), WriteTimeout: settings.Duration("HTTP_WRITE_TIMEOUT", 60*time.Second), IdleTimeout: 60 * time.Second}
+	return serve(ctx, server, server.ListenAndServe)
+}
+
+func serve(ctx context.Context, server *http.Server, listen func() error) error {
 	done := make(chan struct{})
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		select {
 		case <-ctx.Done():
-			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			shutdown, cancel := context.WithTimeout(context.Background(), settings.Duration("SHUTDOWN_TIMEOUT", 25*time.Second))
 			defer cancel()
-			_ = server.Shutdown(shutdown)
+			if err := server.Shutdown(shutdown); err != nil {
+				slog.Warn("HTTP shutdown timed out")
+				_ = server.Close()
+			}
 		case <-done:
 		}
 	}()
-	e := server.ListenAndServe()
+	e := listen()
 	close(done)
+	<-stopped
 	if e == http.ErrServerClosed {
 		return nil
 	}
@@ -71,4 +83,32 @@ func Routing(ctx context.Context, m *shardmap.Map) (func(), error) {
 	}
 	m.DB = store.DB
 	return func() { store.DB.Close() }, nil
+}
+
+// Retry waits for dependencies during startup, bounded by the caller's context.
+func Retry(ctx context.Context, step string, fn func(context.Context) error) error {
+	delay := 250 * time.Millisecond
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%s: %w", step, err)
+		}
+		attempt, cancel := context.WithTimeout(ctx, settings.Duration("STARTUP_ATTEMPT_TIMEOUT", 10*time.Second))
+		err := fn(attempt)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		slog.Warn("startup step failed; retrying", "step", step)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("%s: %w", step, ctx.Err())
+		case <-timer.C:
+		}
+		delay = min(delay*2, 5*time.Second)
+	}
+}
+func Logging(service string) {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", service, "shard", os.Getenv("SHARD_ID"), "replica", os.Getenv("REPLICA_ID"), "version", Env("VERSION", "dev")))
 }

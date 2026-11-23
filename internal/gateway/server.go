@@ -1,16 +1,19 @@
 package gateway
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/azare242/gobank/internal/auth"
 	"github.com/azare242/gobank/internal/coordinator"
 	"github.com/azare242/gobank/internal/httpbank"
 	"github.com/azare242/gobank/internal/repository"
 	"github.com/azare242/gobank/internal/serviceerr"
+	"github.com/azare242/gobank/internal/settings"
 	"github.com/azare242/gobank/internal/shardmap"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -35,11 +38,13 @@ func (s *Server) Handler() http.Handler {
 		httpbank.JSON(w, 200, map[string]string{"status": "alive"})
 	})
 	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
-		if !s.Pool.Ready() {
+		ctx, cancel := context.WithTimeout(r.Context(), settings.Duration("READINESS_TIMEOUT", time.Second))
+		defer cancel()
+		if !s.Pool.ReadyContext(ctx) {
 			httpbank.Error(w, serviceerr.New(503, "shard_unavailable"))
 			return
 		}
-		if e := s.Coordinator.DB.PingContext(r.Context()); e != nil {
+		if e := s.Coordinator.DB.PingContext(ctx); e != nil {
 			httpbank.Error(w, e)
 			return
 		}

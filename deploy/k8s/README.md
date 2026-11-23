@@ -1,11 +1,16 @@
 # Kubernetes manifests for gobank
 
-The repository has three deployment modes. Each one is self-contained and uses
-its own namespace, so you can run them side by side on the same Minikube cluster.
+For the core Assignment 3 deployment, use the [Minikube runbook](../../docs/kubernetes-runbook.md).
+It uses DNS discovery, CloudNativePG replication, probes, HPA, network policies,
+and the published v2 images.
+
+The older examples below are retained for comparison. The Assignment 3 setup
+and the older sharded example both use `gobank`; apply only one of them.
 
 | Directory | Mode | Entry point |
 | --- | --- | --- |
-| [`sharded/`](sharded/README.md) | Gateway + two shards + PostgreSQL (Assignment 2/3) | `kubectl apply -f deploy/k8s/sharded` |
+| [`overlays/minikube/`](../../docs/kubernetes-runbook.md) | Core Assignment 3 with replicated PostgreSQL | `kubectl apply -k deploy/k8s/overlays/minikube` |
+| [`sharded/`](sharded/README.md) | Older static-routing, single-instance DB example | `kubectl apply -f deploy/k8s/sharded` |
 | [`standalone/`](standalone/README.md) | Original single server (`cmd/server`) with SQLite (Assignment 1) | `kubectl apply -f deploy/k8s/standalone` |
 | [`cluster/`](cluster/README.md) | Three-node Raft cluster (`cmd/cluster-server`, Assignment 1 bonus) | `kubectl apply -f deploy/k8s/cluster` |
 

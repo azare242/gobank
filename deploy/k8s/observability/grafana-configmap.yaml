@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: gobank-monitoring
+  name: grafana-provisioning
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: gobank
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards

@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gobank
+resources:
+  - configmap-app.yaml
+  - configmap-shardmap.yaml
+  - gateway-deployment.yaml
+  - gateway-hpa.yaml
+  - gateway-pdb.yaml
+  - gateway-service.yaml
+  - ingress.yaml
+  - namespace.yaml
+  - serviceaccounts.yaml
+  - shard-a-deployment.yaml
+  - shard-a-headless-service.yaml
+  - shard-a-hpa.yaml
+  - shard-a-pdb.yaml
+  - shard-b-deployment.yaml
+  - shard-b-headless-service.yaml
+  - shard-b-hpa.yaml
+  - shard-b-pdb.yaml
+  - networkpolicies.yaml

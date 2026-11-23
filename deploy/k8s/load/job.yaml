@@ -1,0 +1,70 @@
+# Run explicitly after the Gateway is ready. This Job is not part of app startup.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gobank-load
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gobank-load
+        app.kubernetes.io/part-of: gobank
+        app.kubernetes.io/component: loadgen
+    spec:
+      serviceAccountName: gobank-app
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: client
+          image: docker.io/azare242/gobank-client:v2
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              # The runtime has sed; no jq, curl, or extra image is needed.
+              login="$(client -gateway http://gateway -action login -username A0500)"
+              BANK_TOKEN="$(printf '%s' "$login" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
+              test -n "$BANK_TOKEN"
+              export BANK_TOKEN
+              exec client -gateway http://gateway -action workload -account A0500 \
+                -count 30000 -workers 8 -interval 50ms \
+                -journal "/tmp/${POD_NAME}.jsonl"
+          env:
+            - name: BANK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gobank-app-secrets
+                  key: FIXTURE_PASSWORD
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: journal
+              mountPath: /tmp
+      volumes:
+        - name: journal
+          emptyDir:
+            sizeLimit: 128Mi
