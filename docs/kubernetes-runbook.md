@@ -300,7 +300,80 @@ kubectl logs -n gobank -l app.kubernetes.io/name=gateway --all-containers --pref
 kubectl logs -n gobank -l app.kubernetes.io/component=shard --all-containers --prefix --tail=100
 ```
 
+## Live demo
+
+From the repository root, with the Minikube deployment running and the Ingress
+reachable, run the presenter script against the demo profile:
+
+```bash
+DEMO_IP="$(minikube -p gobank-assignment3 ip)"
+export NO_PROXY="${DEMO_IP},127.0.0.1,localhost"
+export GATEWAY_URL="http://${DEMO_IP}"
+python3 scripts/k8s/demo.py all --context gobank-assignment3
+```
+
+The script pauses between scenes so you can explain the evidence on screen.
+Use `--no-pause` for an unattended run. You can also select `deployment`,
+`banking`, `replication`, `security`, or a numbered experiment from the table.
+
+| Scene | What to point out |
+| --- | --- |
+| deployment | Pods, Services, PVCs, CNPG Clusters, Ingress, and the external readiness response |
+| banking | Fixture accounts on both shards, deposits and withdrawals, local transfer and cross-shard commit |
+| replication | PostgreSQL roles and streaming synchronous standbys |
+| 1 | Deleted application Pod and surviving or replacement replicas |
+| 2 | Old and promoted database primary |
+| 4 | Prepared state before and after standby promotion, then the recovered transaction |
+| 3 | Concurrent transfers and exact expected balances |
+| 5 | HPA replica counts under read and transfer load |
+| 6 | Rolling restart, deliberate image failure, and rollback |
+| 7 | One committed transaction for 20 requests using the same key |
+| security | Successful connection to the owning DB and timeouts for forbidden connections |
+
+The numbered scenes save full evidence under `scripts/k8s/evidence/`. Run one
+demo or load generator at a time so the fixture deltas can be attributed to the
+scene. Allow several minutes for autoscaling and recovery, and select individual
+scenes when recording segments for the 20-minute video. The runner covers the
+core Minikube deployment. The multi-VM bonus scenarios require their own
+infrastructure.
+
 ## 10. Validation and cleanup
+
+Run the repeatable failure tests only against a disposable demo deployment.
+They change fixture accounts, delete Pods, suspend the Gateway HPA during its
+crash experiment, and restore it afterwards. They do not delete PVCs or edit
+banking state with SQL. Use an explicit context to avoid testing another cluster:
+
+```bash
+NO_PROXY="$(minikube -p gobank-assignment3 ip),127.0.0.1,localhost" \
+GATEWAY_URL="http://$(minikube -p gobank-assignment3 ip)" \
+python3 scripts/k8s/experiments.py all --context gobank-assignment3
+python3 scripts/k8s/verify.py --context gobank-assignment3
+```
+
+Use `--context minikube` instead if following the default profile above. The
+experiment argument also accepts `1` through `7` separately. JSON evidence goes
+under `scripts/k8s/evidence/<UTC timestamp>/`, which is ignored by Git. Keep
+these files for the report. The verifier checks primary roles, synchronous
+replication, balances, prepared transactions, coordinator decisions and matching
+participant decisions/acknowledgments. Run it after workloads settle.
+
+The autoscaling experiment combines 64 authenticated read workers with opposing
+cross-shard transfers. It waits up to six minutes for an HPA to increase replicas;
+it does not change CPU targets or manually increase replica counts. Experiment 6
+uses a rolling restart of the existing image, a deliberately invalid image, and
+rollback. Testing a new application version is a separate release check.
+
+Database parameters bound abandoned TCP connections and idle sessions. Without
+these limits, deleting a Pod while it holds a PostgreSQL session advisory lock
+can delay transaction recovery and block replacement fixture seeding. The demo
+uses 15-second TCP idle/user timeouts, three keepalive probes five seconds apart,
+a 60-second idle-session timeout and a 30-second idle-transaction timeout.
+Prepared transactions remain durable after a session ends; only the coordinator
+resolves them using its recorded decision. Existing connections may need to be
+recreated before the settings take effect. See the
+[Minikube test results](kubernetes-test-results.md) for observed failures and
+the limits of this validation.
 
 Render all entry points without applying them:
 
