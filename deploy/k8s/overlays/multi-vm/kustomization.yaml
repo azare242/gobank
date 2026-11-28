@@ -1,0 +1,92 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: gobank
+resources:
+  - ../../base
+  - ../../data
+  - ../../data/bonus
+  - promotion-guard.yaml
+  - gateway-nodeport.yaml
+patches:
+  - target:
+      kind: Cluster
+      group: postgresql.cnpg.io
+    patch: |-
+      - op: replace
+        path: /spec/instances
+        value: 3
+      - op: replace
+        path: /spec/storage/storageClass
+        value: gobank-local
+      - op: add
+        path: /spec/affinity/nodeSelector
+        value:
+          gobank.io/worker: "true"
+      - op: replace
+        path: /spec/resources/requests/cpu
+        value: 150m
+      - op: replace
+        path: /spec/resources/limits/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/postgresql/parameters/max_connections
+        value: "80"
+      - op: add
+        path: /spec/postgresql/parameters/shared_buffers
+        value: "64MB"
+      - op: replace
+        path: /spec/postgresql/synchronous/number
+        value: 2
+      - op: replace
+        path: /spec/primaryUpdateStrategy
+        value: supervised
+  - target:
+      kind: Ingress
+      name: gobank
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: gobank
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          gobank.io/worker: "true"
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  topologyKey: kubernetes.io/hostname
+                  matchLabelKeys: [app.kubernetes.io/name]
+                  labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/part-of: gobank
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 256Mi
+  - target:
+      kind: HorizontalPodAutoscaler
+    patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+  - target:
+      kind: ConfigMap
+      name: gobank-config
+    patch: |-
+      - op: replace
+        path: /data/SEED_FIXTURES
+        value: "false"
+      - op: replace
+        path: /data/DB_MAX_OPEN_CONNS
+        value: "8"
+      - op: replace
+        path: /data/DB_MAX_IDLE_CONNS
+        value: "3"

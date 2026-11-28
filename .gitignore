@@ -9,7 +9,7 @@ bin/
 data/
 logs/
 *-journal.jsonl
-
+/.bonus
 __pycache__/
 *.pyc
 
@@ -24,3 +24,8 @@ __pycache__/
 # Track database manifests despite the generic data/ rule above.
 !/deploy/k8s/data/
 !/deploy/k8s/data/*.yaml
+
+# Multi-VM demo input, disks, credentials, backups and evidence.
+!/deploy/k8s/data/bonus/
+!/deploy/k8s/data/bonus/*.yaml
+/.bonus/

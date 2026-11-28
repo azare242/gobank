@@ -1,0 +1,13 @@
+<network>
+  <name>gobank-bonus</name>
+  <forward mode="nat"/>
+  <bridge name="virbr-gobank"/>
+  <domain name="gobank.test" localOnly="yes"/>
+  <ip address="192.168.83.1" netmask="255.255.255.0">
+    <dhcp>
+      <host mac="52:54:00:83:00:10" name="gobank-cp" ip="192.168.83.10"/>
+      <host mac="52:54:00:83:00:11" name="gobank-w1" ip="192.168.83.11"/>
+      <host mac="52:54:00:83:00:12" name="gobank-w2" ip="192.168.83.12"/>
+    </dhcp>
+  </ip>
+</network>
